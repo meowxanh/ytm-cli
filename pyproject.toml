@@ -1,0 +1,24 @@
+[project]
+name = "ytm-cli"
+version = "1.0.0"
+description = "CLI YouTube music player — search, queue, library, lyrics"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "yt-dlp>=2024.1.0",
+    "rich>=13.0.0",
+    "pygame>=2.5.0",
+    "requests>=2.31.0",
+    "imageio-ffmpeg>=0.5.0",
+    "flask>=3.0.0",
+]
+
+[project.scripts]
+ytm = "ytm.app:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["ytm*"]

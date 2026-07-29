@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>YTM — YouTube Music</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark">▶</span>
+        <div>
+          <strong>YTM</strong>
+          <small>YouTube Music</small>
+        </div>
+      </div>
+      <nav class="nav">
+        <button class="nav-btn active" data-view="home">Khám phá</button>
+        <button class="nav-btn" data-view="queue">Hàng đợi</button>
+        <button class="nav-btn" data-view="favorites">Yêu thích</button>
+        <button class="nav-btn" data-view="history">Lịch sử</button>
+        <button class="nav-btn" data-view="playlists">Playlist</button>
+        <button class="nav-btn" data-view="lyrics">Lyrics</button>
+      </nav>
+      <div class="sidebar-foot">
+        <p>Data local <code>~/.ytm</code></p>
+        <p class="muted">Audio local (yt-dlp cache)</p>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <form id="search-form" class="search-box" autocomplete="off">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.5 6.5 0 1 0 14 15.5l.27.28v.79l5 5 1.5-1.5-5-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
+          <input id="search-input" type="search" placeholder="Tìm bài hát, nghệ sĩ, dán link YouTube…" />
+          <button type="submit">Tìm</button>
+        </form>
+      </header>
+
+      <section id="view-home" class="view active">
+        <div class="section-head">
+          <h1 id="list-title">Gợi ý</h1>
+          <p id="list-sub" class="muted">Search để bắt đầu nghe</p>
+        </div>
+        <div id="track-grid" class="track-grid"></div>
+      </section>
+
+      <section id="view-queue" class="view">
+        <div class="section-head row">
+          <div>
+            <h1>Hàng đợi</h1>
+            <p class="muted" id="queue-meta">0 bài</p>
+          </div>
+          <div class="row gap">
+            <button class="chip" id="btn-shuffle" type="button">Shuffle off</button>
+            <button class="chip danger" id="btn-clear-queue" type="button">Xóa queue</button>
+          </div>
+        </div>
+        <div id="queue-list" class="track-list"></div>
+      </section>
+
+      <section id="view-favorites" class="view">
+        <div class="section-head"><h1>Yêu thích</h1></div>
+        <div id="fav-list" class="track-list"></div>
+      </section>
+
+      <section id="view-history" class="view">
+        <div class="section-head"><h1>Lịch sử</h1></div>
+        <div id="history-list" class="track-list"></div>
+      </section>
+
+      <section id="view-playlists" class="view">
+        <div class="section-head row">
+          <h1>Playlist</h1>
+          <form id="pl-create" class="inline-form">
+            <input id="pl-name" placeholder="Tên playlist mới" />
+            <button type="submit">Tạo</button>
+          </form>
+        </div>
+        <div id="playlist-panel" class="playlist-panel"></div>
+      </section>
+
+      <section id="view-lyrics" class="view">
+        <div class="section-head">
+          <h1>Lyrics</h1>
+          <p class="muted" id="lyrics-meta">Chưa có bài đang phát</p>
+        </div>
+        <pre id="lyrics-body" class="lyrics-body">Chọn bài và bấm ♫ Lyrics…</pre>
+      </section>
+    </main>
+
+    <footer class="player">
+      <div class="player-left">
+        <div id="now-thumb" class="now-thumb empty"></div>
+        <div class="now-meta">
+          <div id="now-title" class="now-title">Chưa phát</div>
+          <div id="now-artist" class="now-artist muted">—</div>
+        </div>
+        <button class="icon-btn" id="btn-fav" title="Favorite" type="button">♡</button>
+        <button class="icon-btn" id="btn-like" title="Like" type="button">👍</button>
+        <button class="icon-btn" id="btn-dislike" title="Dislike" type="button">👎</button>
+        <button class="icon-btn" id="btn-lyrics" title="Lyrics" type="button">♫</button>
+      </div>
+
+      <div class="player-center">
+        <div class="controls">
+          <button class="icon-btn" id="btn-prev" type="button" title="Prev">⏮</button>
+          <button class="play-btn" id="btn-play" type="button" title="Play/Pause">▶</button>
+          <button class="icon-btn" id="btn-next" type="button" title="Next">⏭</button>
+        </div>
+        <div class="progress-row">
+          <span id="time-cur">0:00</span>
+          <input id="seek" type="range" min="0" max="1000" value="0" />
+          <span id="time-dur">0:00</span>
+        </div>
+      </div>
+
+      <div class="player-right">
+        <label class="vol-wrap" title="Volume">
+          <span>🔊</span>
+          <input id="volume" type="range" min="0" max="100" value="70" />
+        </label>
+        <div id="play-status" class="play-status" title="Trạng thái phát"></div>
+      </div>
+    </footer>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

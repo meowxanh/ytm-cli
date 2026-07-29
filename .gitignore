@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+*.mp3
+*.m4a
+*.webm
+.env
+.DS_Store
+Thumbs.db
