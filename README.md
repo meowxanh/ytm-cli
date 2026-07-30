@@ -22,22 +22,19 @@ Hướng dẫn đủ: [`ytm-mobile/README.md`](ytm-mobile/README.md)
 
 ---
 
-## Web + stream server (ổn định)
+## Web · SoundCloud
 
-API public (Piped/Invidious) hay **chết** → cần stream server yt-dlp nhẹ:
+Đã **bỏ YouTube** → nghe **SoundCloud** (stream MP3 progressive).
 
 ```powershell
 cd C:\Users\Duy\ytm-cli
 .\run-stream.ps1
 ```
 
-Rồi mở:
+Mở: **https://meowxanh.github.io/ytm-cli/**  
+(App tự gọi `http://127.0.0.1:8765`)
 
-**https://meowxanh.github.io/ytm-cli/?api=http://127.0.0.1:8765**
-
-- Chỉ lấy **URL audio**, không tải file  
-- **Không embed**  
-- iPhone cùng Wi‑Fi: `?api=http://IP-PC:8765`
+Cloud free (không bật PC): xem `DEPLOY-CLOUD.md` (Render).
 
 ## Bật GitHub Pages (1 lần)
 

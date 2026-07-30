@@ -1,26 +1,10 @@
-/* YTM — HTML5 audio only (no embed). Prefer local yt-dlp stream API; public APIs as fallback. */
+/* YTM — SoundCloud player (HTML5 audio, no YouTube) */
 (() => {
-  const STORAGE_KEY = "ytm_static_v2";
-  const STREAM_CACHE_KEY = "ytm_stream_cache_v1";
+  const STORAGE_KEY = "ytm_sc_v1";
+  const STREAM_CACHE_KEY = "ytm_sc_stream_v1";
   const API_KEY = "ytm_stream_api";
-  const STREAM_TTL_MS = 25 * 60 * 1000;
-
-  // Public instances often down — kept as weak fallback
-  const INVIDIOUS = [
-    "https://yewtu.be",
-    "https://inv.nadeko.net",
-    "https://invidious.nerdvpn.de",
-    "https://vid.puffyan.us",
-    "https://inv.tux.pizza",
-  ];
-  const PIPED = [
-    "https://api.piped.private.coffee",
-    "https://pipedapi.kavin.rocks",
-    "https://pipedapi.reallyaweso.me",
-    "https://pipedapi.r4fo.com",
-    "https://pipedapi.ducks.party",
-  ];
-  const COBALT = ["https://api.cobalt.tools/", "https://cobalt-api.kwiatekmiki.com/"];
+  const CLIENT_KEY = "ytm_sc_client";
+  const STREAM_TTL_MS = 20 * 60 * 1000;
 
   const state = {
     results: [],
@@ -31,8 +15,6 @@
     volume: 70,
     favorites: [],
     history: [],
-    likes: [],
-    dislikes: [],
     playlists: {},
     activePlaylist: null,
     isPlaying: false,
@@ -40,13 +22,13 @@
     mode: "none",
     loadToken: 0,
     suppressAudioEvents: false,
-    streamApi: "", // e.g. http://127.0.0.1:8765
+    streamApi: "",
     streamApiOk: false,
+    clientId: "",
   };
 
-  // in-memory stream cache: id -> { url, exp }
   const streamMem = new Map();
-  const searchMem = new Map(); // q -> { tracks, exp }
+  const searchMem = new Map();
 
   const audio = () => document.getElementById("audio-el");
   const $ = (s) => document.querySelector(s);
@@ -58,7 +40,7 @@
     el.textContent = msg;
     el.classList.remove("hidden");
     clearTimeout(toast._t);
-    toast._t = setTimeout(() => el.classList.add("hidden"), 2600);
+    toast._t = setTimeout(() => el.classList.add("hidden"), 2800);
   }
 
   function setStatus(text) {
@@ -70,8 +52,9 @@
 
   function thumb(t) {
     if (!t) return "";
-    if (t.thumbnail) return t.thumbnail;
-    return t.id ? `https://i.ytimg.com/vi/${t.id}/hqdefault.jpg` : "";
+    let u = t.thumbnail || "";
+    if (u) return u.replace("-large", "-t500x500").replace("-badge", "-t500x500");
+    return "";
   }
 
   function fmt(sec) {
@@ -111,8 +94,6 @@
           volume: state.volume,
           favorites: state.favorites,
           history: state.history.slice(0, 100),
-          likes: state.likes,
-          dislikes: state.dislikes,
           playlists: state.playlists,
         })
       );
@@ -121,7 +102,7 @@
 
   function load() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY) || localStorage.getItem("ytm_static_v1");
+      const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return;
       const d = JSON.parse(raw);
       state.queue = d.queue || [];
@@ -130,8 +111,6 @@
       state.volume = d.volume ?? 70;
       state.favorites = d.favorites || [];
       state.history = d.history || [];
-      state.likes = d.likes || [];
-      state.dislikes = d.dislikes || [];
       state.playlists = d.playlists || {};
     } catch (_) {}
   }
@@ -172,51 +151,30 @@
     saveStreamCacheDisk();
   }
 
-  function extractId(text) {
-    text = (text || "").trim();
-    const m = text.match(
-      /(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/|live\/)|music\.youtube\.com\/watch\?v=)([A-Za-z0-9_-]{11})/
-    );
-    if (m) return m[1];
-    if (/^[A-Za-z0-9_-]{11}$/.test(text)) return text;
-    return null;
+  function setStreamApi(url) {
+    state.streamApi = (url || "").trim().replace(/\/$/, "");
+    try {
+      if (state.streamApi) localStorage.setItem(API_KEY, state.streamApi);
+      else localStorage.removeItem(API_KEY);
+    } catch (_) {}
+    const input = $("#stream-api-input");
+    if (input) input.value = state.streamApi;
   }
 
-  function normalizeTrack(raw) {
-    if (!raw) return null;
-    let id = raw.id || raw.videoId || extractId(raw.url || "") || "";
-    if (typeof id === "string" && id.includes("watch")) {
-      const m = id.match(/[?&]v=([A-Za-z0-9_-]{11})/);
-      if (m) id = m[1];
-    }
-    id = String(id).replace("/watch?v=", "").slice(0, 11);
-    if (!id || id.length < 6) return null;
-    let thumbnail = raw.thumbnail || "";
-    if (!thumbnail && Array.isArray(raw.videoThumbnails) && raw.videoThumbnails.length) {
-      thumbnail = raw.videoThumbnails[raw.videoThumbnails.length - 1].url || "";
-    }
-    if (!thumbnail && Array.isArray(raw.thumbnails) && raw.thumbnails.length) {
-      const last = raw.thumbnails[raw.thumbnails.length - 1];
-      thumbnail = last.url || last.src || "";
-    }
-    return {
-      id,
-      title: raw.title || "Unknown",
-      uploader: raw.uploader || raw.author || raw.channelName || raw.channel || raw.uploaderName || "",
-      duration: raw.duration ?? raw.lengthSeconds ?? null,
-      duration_str:
-        raw.duration_str ||
-        (raw.lengthSeconds != null
-          ? fmt(raw.lengthSeconds)
-          : raw.duration != null
-            ? fmt(raw.duration)
-            : "--:--"),
-      thumbnail: thumbnail || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
-      url: `https://www.youtube.com/watch?v=${id}`,
-    };
+  function getStreamApiBases() {
+    const bases = [];
+    if (state.streamApi) bases.push(state.streamApi.replace(/\/$/, ""));
+    bases.push("http://127.0.0.1:8765");
+    bases.push("http://localhost:8765");
+    return [...new Set(bases.filter(Boolean))];
   }
 
-  async function fetchJson(url, timeout = 6000, opts = {}) {
+  function showApiBanner(show) {
+    const el = $("#api-banner");
+    if (el) el.hidden = !show;
+  }
+
+  async function fetchJson(url, timeout = 15000, opts = {}) {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeout);
     try {
@@ -228,104 +186,76 @@
     }
   }
 
-  /** First fulfilled success wins; ignore failures. */
   function raceOk(promises) {
     return new Promise((resolve, reject) => {
       if (!promises.length) return reject(new Error("empty"));
       let left = promises.length;
-      let settled = false;
+      let done = false;
       promises.forEach((p) => {
         Promise.resolve(p)
           .then((v) => {
-            if (settled) return;
+            if (done) return;
             if (v == null || v === false || (Array.isArray(v) && !v.length)) {
               left -= 1;
               if (left === 0) reject(new Error("all failed"));
               return;
             }
-            settled = true;
+            done = true;
             resolve(v);
           })
           .catch(() => {
             left -= 1;
-            if (!settled && left === 0) reject(new Error("all failed"));
+            if (!done && left === 0) reject(new Error("all failed"));
           });
       });
     });
   }
 
-  function pickAudioFromPiped(data) {
-    const list = (data.audioStreams || []).slice();
-    if (!list.length) return null;
-    // Prefer mid quality m4a for faster start (not highest bitrate)
-    const m4a = list.filter((s) => /mp4|m4a|aac/i.test(String(s.mimeType || s.format || "")));
-    const pool = m4a.length ? m4a : list;
-    pool.sort((a, b) => (a.bitrate || 0) - (b.bitrate || 0));
-    // pick around 96–160kbps if possible
-    const mid =
-      pool.find((s) => (s.bitrate || 0) >= 90000 && (s.bitrate || 0) <= 170000) ||
-      pool[Math.floor(pool.length / 2)] ||
-      pool[0];
-    return mid?.url || null;
-  }
-
-  function pickAudioFromInv(data) {
-    const formats = data.adaptiveFormats || [];
-    const aud = formats.filter((f) => String(f.type || f.mimeType || "").includes("audio"));
-    if (!aud.length) return null;
-    const m4a = aud.filter((f) => /mp4|m4a|aac/i.test(String(f.type || "")));
-    const pool = m4a.length ? m4a : aud;
-    pool.sort((a, b) => (a.bitrate || 0) - (b.bitrate || 0));
-    const mid =
-      pool.find((s) => (s.bitrate || 0) >= 90000 && (s.bitrate || 0) <= 170000) ||
-      pool[Math.floor(pool.length / 2)] ||
-      pool[0];
-    return mid?.url || null;
-  }
-
-  function getStreamApiBases() {
-    const bases = [];
-    if (state.streamApi) bases.push(state.streamApi.replace(/\/$/, ""));
-    // optional cloud defaults (set after you deploy)
-    // bases.push("https://ytm-stream.onrender.com");
-    // local optional
-    bases.push("http://127.0.0.1:8765");
-    bases.push("http://localhost:8765");
-    return [...new Set(bases.filter(Boolean))];
-  }
-
-  function showApiBanner(show) {
-    const el = $("#api-banner");
-    if (!el) return;
-    if (show) el.hidden = false;
-    else el.hidden = true;
-  }
-
-  function setStreamApi(url) {
-    state.streamApi = (url || "").trim().replace(/\/$/, "");
+  // ——— SoundCloud client_id (browser may fail CORS; API server preferred) ———
+  async function ensureClientId() {
+    if (state.clientId) return state.clientId;
     try {
-      if (state.streamApi) localStorage.setItem(API_KEY, state.streamApi);
-      else localStorage.removeItem(API_KEY);
+      const saved = localStorage.getItem(CLIENT_KEY);
+      if (saved && saved.length === 32) {
+        state.clientId = saved;
+        return saved;
+      }
     } catch (_) {}
-    const input = $("#stream-api-input");
-    if (input) input.value = state.streamApi;
+
+    // Try via our stream API health doesn't return cid; fetch from SC homepage scripts via API search warmup
+    // Direct browser extract often blocked — skip if API available
+    return state.clientId;
   }
 
-  async function resolveFromLocalApi(videoId) {
+  async function scApiSearch(q) {
     const tasks = getStreamApiBases().map((base) =>
-      fetchJson(`${base}/api/stream?id=${encodeURIComponent(videoId)}`, 25000).then((data) => {
+      fetchJson(`${base}/api/search?q=${encodeURIComponent(q)}&limit=15`, 20000).then((data) => {
+        const tracks = (data.tracks || []).map(normalize).filter(Boolean);
+        if (!tracks.length) throw new Error("empty");
+        state.streamApiOk = true;
+        state.streamApi = base;
+        return tracks;
+      })
+    );
+    return raceOk(tasks);
+  }
+
+  async function scApiStream(id) {
+    const tasks = getStreamApiBases().map((base) =>
+      fetchJson(`${base}/api/stream?id=${encodeURIComponent(id)}`, 25000).then((data) => {
         if (!data?.url) throw new Error("no url");
         state.streamApiOk = true;
+        state.streamApi = base;
         return data.url;
       })
     );
     return raceOk(tasks);
   }
 
-  async function searchFromLocalApi(q) {
+  async function scApiCharts() {
     const tasks = getStreamApiBases().map((base) =>
-      fetchJson(`${base}/api/search?q=${encodeURIComponent(q)}&limit=12`, 25000).then((data) => {
-        const tracks = (data.tracks || []).map(normalizeTrack).filter(Boolean);
+      fetchJson(`${base}/api/charts?kind=trending&genre=all-music`, 20000).then((data) => {
+        const tracks = (data.tracks || []).map(normalize).filter(Boolean);
         if (!tracks.length) throw new Error("empty");
         state.streamApiOk = true;
         return tracks;
@@ -334,148 +264,55 @@
     return raceOk(tasks);
   }
 
-  async function resolveAudioUrl(videoId) {
-    const cached = getCachedStream(videoId);
-    if (cached) return cached;
-
-    // 1) Local yt-dlp stream server (reliable)
-    try {
-      const url = await resolveFromLocalApi(videoId);
-      setCachedStream(videoId, url);
-      return url;
-    } catch (_) {}
-
-    // 2) Weak public fallbacks (often down)
-    const tasks = [];
-    COBALT.forEach((base) => {
-      tasks.push(
-        (async () => {
-          const res = await fetch(base, {
-            method: "POST",
-            headers: { Accept: "application/json", "Content-Type": "application/json" },
-            body: JSON.stringify({
-              url: `https://www.youtube.com/watch?v=${videoId}`,
-              downloadMode: "audio",
-              audioFormat: "mp3",
-              audioBitrate: "128",
-            }),
-          });
-          if (!res.ok) throw new Error("cobalt");
-          const data = await res.json();
-          const u = data.url || data.tunnel || data.audio;
-          if (typeof u === "string" && u.startsWith("http")) return u;
-          throw new Error("cobalt empty");
-        })()
-      );
-    });
-    PIPED.forEach((base) => {
-      tasks.push(
-        fetchJson(`${base}/streams/${videoId}`, 8000).then((data) => {
-          const u = pickAudioFromPiped(data);
-          if (!u) throw new Error("piped empty");
-          return u;
-        })
-      );
-    });
-    INVIDIOUS.forEach((base) => {
-      tasks.push(
-        fetchJson(`${base}/api/v1/videos/${videoId}`, 8000).then((data) => {
-          const u = pickAudioFromInv(data);
-          if (!u) throw new Error("inv empty");
-          return u;
-        })
-      );
-    });
-
-    try {
-      const url = await raceOk(tasks);
-      setCachedStream(videoId, url);
-      return url;
-    } catch (_) {
-      throw new Error(
-        "Không lấy được stream. Chạy stream server: .\\run-stream.ps1 rồi mở web kèm ?api=http://127.0.0.1:8765"
-      );
-    }
+  function normalize(t) {
+    if (!t || !t.id) return null;
+    return {
+      id: String(t.id),
+      title: t.title || "Unknown",
+      uploader: t.uploader || "",
+      duration: t.duration ?? null,
+      duration_str: t.duration != null ? fmt(t.duration) : "--:--",
+      thumbnail: t.thumbnail || "",
+      permalink_url: t.permalink_url || "",
+      source: "soundcloud",
+    };
   }
 
   async function searchTracks(q) {
-    const id = extractId(q);
-    if (id) {
-      return [
-        normalizeTrack({
-          id,
-          title: "YouTube video",
-          uploader: "",
-          thumbnail: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
-        }),
-      ];
-    }
-
-    const key = q.toLowerCase().trim();
+    q = (q || "").trim();
+    if (!q) return [];
+    const key = q.toLowerCase();
     const hit = searchMem.get(key);
     if (hit && hit.exp > Date.now()) return hit.tracks;
 
-    // 1) local yt-dlp search
     try {
-      const tracks = await searchFromLocalApi(q);
-      searchMem.set(key, { tracks, exp: Date.now() + 5 * 60 * 1000 });
-      return tracks;
-    } catch (_) {}
-
-    // 2) public
-    const tasks = [];
-    INVIDIOUS.forEach((base) => {
-      tasks.push(
-        fetchJson(`${base}/api/v1/search?q=${encodeURIComponent(q)}&type=video`, 7000).then((data) => {
-          if (!Array.isArray(data)) throw new Error("bad");
-          const tracks = data.map(normalizeTrack).filter(Boolean).slice(0, 15);
-          if (!tracks.length) throw new Error("empty");
-          return tracks;
-        })
-      );
-    });
-    PIPED.forEach((base) => {
-      tasks.push(
-        fetchJson(`${base}/search?q=${encodeURIComponent(q)}&filter=videos`, 7000).then((data) => {
-          const items = data.items || data || [];
-          if (!Array.isArray(items)) throw new Error("bad");
-          const tracks = items
-            .map((it) =>
-              normalizeTrack({
-                id: (it.url || "").replace("/watch?v=", "").replace("/watch/", "") || it.id,
-                title: it.title,
-                uploader: it.uploaderName || it.uploader,
-                duration: it.duration,
-                thumbnail: it.thumbnail,
-              })
-            )
-            .filter(Boolean)
-            .slice(0, 15);
-          if (!tracks.length) throw new Error("empty");
-          return tracks;
-        })
-      );
-    });
-
-    try {
-      const tracks = await raceOk(tasks);
+      const tracks = await scApiSearch(q);
       searchMem.set(key, { tracks, exp: Date.now() + 5 * 60 * 1000 });
       return tracks;
     } catch (_) {
-      throw new Error(
-        "Search lỗi. Bật stream server: .\\run-stream.ps1 (yt-dlp) — API public đang chết."
-      );
+      throw new Error("Search lỗi — bật Stream API (SoundCloud) · run-stream.ps1 hoặc Render");
+    }
+  }
+
+  async function resolveAudioUrl(id) {
+    const cached = getCachedStream(id);
+    if (cached) return cached;
+    try {
+      const url = await scApiStream(id);
+      setCachedStream(id, url);
+      return url;
+    } catch (_) {
+      throw new Error("Không lấy được stream SoundCloud — kiểm tra Stream API");
     }
   }
 
   async function probeStreamApi() {
     for (const base of getStreamApiBases()) {
       try {
-        const data = await fetchJson(`${base}/api/health`, 2500);
+        const data = await fetchJson(`${base}/api/health`, 3000);
         if (data?.ok) {
           state.streamApiOk = true;
           state.streamApi = base;
-          setStatus(`API: ${base}`);
           return base;
         }
       } catch (_) {}
@@ -484,21 +321,9 @@
     return null;
   }
 
-  async function fetchLyrics(track) {
-    try {
-      const q = `${track.uploader || ""} ${track.title || ""}`.trim();
-      const res = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(q)}`, {
-        headers: { "User-Agent": "ytm-static/2.0" },
-      });
-      if (!res.ok) return null;
-      const results = await res.json();
-      if (!results?.length) return null;
-      const plain = results[0].plainLyrics || results[0].syncedLyrics;
-      if (!plain) return null;
-      return plain.replace(/\[\d+:\d+(?:\.\d+)?\]/g, "").trim();
-    } catch (_) {
-      return null;
-    }
+  // ——— UI helpers (same structure as before) ———
+  function toastMsg(msg) {
+    toast(msg);
   }
 
   function rebuildShuffle() {
@@ -553,12 +378,13 @@
   }
 
   function rowHTML(t, i, { active = false } = {}) {
+    const art = thumb(t) || "";
     return `
       <div class="track-row ${active ? "active" : ""}" data-id="${t.id}" data-idx="${i}">
-        <img class="art" src="${thumb(t)}" alt="" loading="lazy" decoding="async" />
+        <div class="art" style="${art ? `background-image:url('${art}')` : ""};background-size:cover;background-position:center"></div>
         <div class="meta">
           <div class="t-title">${escapeHtml(t.title)}</div>
-          <div class="t-sub">${escapeHtml(t.uploader || "YouTube")} · ${t.duration_str || fmt(t.duration)}</div>
+          <div class="t-sub">${escapeHtml(t.uploader || "SoundCloud")} · ${t.duration_str || fmt(t.duration)}</div>
         </div>
         <div class="row-actions">
           <button type="button" data-act="queue">＋</button>
@@ -575,10 +401,9 @@
         if (e.target.closest("[data-act]")) return;
         const list = typeof listGetter === "function" ? listGetter() : listGetter;
         const track = list.find((t) => t.id === row.dataset.id);
-        if (track) {
-          if (row.dataset.idx != null && list === state.queue) playAtIndex(Number(row.dataset.idx));
-          else playTrack(track, { enqueueIfMissing: true });
-        }
+        if (!track) return;
+        if (row.dataset.idx != null && list === state.queue) playAtIndex(Number(row.dataset.idx));
+        else playTrack(track, { enqueueIfMissing: true });
       });
     });
     root.querySelectorAll("[data-act]").forEach((btn) => {
@@ -598,7 +423,7 @@
   function renderResults() {
     const html = state.results.length
       ? state.results.map((t, i) => rowHTML(t, i)).join("")
-      : `<div class="empty-state">Search hoặc chọn mood.</div>`;
+      : `<div class="empty-state">Search SoundCloud hoặc chọn mood.</div>`;
     ["#track-grid", "#search-results"].forEach((sel) => {
       const el = $(sel);
       if (!el) return;
@@ -688,9 +513,7 @@
       if (!t) return toast("Chưa có bài");
       const name = state.activePlaylist;
       if (!state.playlists[name]) state.playlists[name] = { name, tracks: [] };
-      if (!state.playlists[name].tracks.some((x) => x.id === t.id)) {
-        state.playlists[name].tracks.push(t);
-      }
+      if (!state.playlists[name].tracks.some((x) => x.id === t.id)) state.playlists[name].tracks.push(t);
       save();
       renderPlaylists();
       toast("Đã thêm");
@@ -719,18 +542,15 @@
     const t = currentTrack();
     const mini = $("#mini-player");
     if (mini) mini.hidden = false;
-
     const title = t?.title || "Chưa phát";
-    const artist = t?.uploader || (t ? "YouTube" : "Chạm để mở");
+    const artist = t?.uploader || (t ? "SoundCloud" : "Chạm để mở");
     const art = thumb(t);
     const playLabel = state.isPlaying ? "⏸" : "▶";
     const favOn = t ? isFav(t.id) : false;
-
     const setTxt = (sel, v) => {
       const el = $(sel);
       if (el) el.textContent = v;
     };
-
     setTxt("#now-title", title);
     setTxt("#now-artist", artist);
     setTxt("#np-title", title);
@@ -744,21 +564,18 @@
     setTxt("#btn-play", playLabel);
     setTxt("#btn-np-play", playLabel);
     setTxt(".d-play", playLabel);
-
     ["#btn-fav", "#btn-np-fav"].forEach((sel) => {
       const el = $(sel);
       if (!el) return;
       el.textContent = favOn ? "♥" : "♡";
       el.classList.toggle("on", favOn);
     });
-
     const sh = $("#btn-shuffle");
     if (sh) {
       sh.textContent = state.shuffle ? "Shuffle on" : "Shuffle";
       sh.classList.toggle("on", state.shuffle);
     }
     $("#btn-np-shuffle")?.classList.toggle("on", state.shuffle);
-
     const resume = $("#btn-resume-session");
     if (resume) {
       if (state.queue.length) {
@@ -768,7 +585,6 @@
         if (rt) rt.textContent = cur?.title || `${state.queue.length} bài`;
       } else resume.hidden = true;
     }
-
     const a = audio();
     if (a) a.volume = state.volume / 100;
   }
@@ -790,7 +606,6 @@
     save();
     renderQueue();
     renderNow();
-    // prefetch stream for queued track
     prefetchStream(track.id);
     toast("＋ Queue");
   }
@@ -809,14 +624,11 @@
 
   function playTrack(track, { enqueueIfMissing = false } = {}) {
     let idx = state.queue.findIndex((t) => t.id === track.id);
-
-    // Nếu phát từ kết quả search: nạp cả list còn lại vào queue để không “hết queue” sau 1 bài
     if (idx < 0 && enqueueIfMissing && state.results?.length) {
       const start = state.results.findIndex((t) => t.id === track.id);
       if (start >= 0) {
-        const slice = state.results.slice(start);
         const existing = new Set(state.queue.map((t) => t.id));
-        for (const t of slice) {
+        for (const t of state.results.slice(start)) {
           if (!existing.has(t.id)) {
             state.queue.push(t);
             existing.add(t.id);
@@ -826,7 +638,6 @@
         if (state.shuffle) rebuildShuffle();
       }
     }
-
     if (idx < 0 && enqueueIfMissing) {
       state.queue.push(track);
       idx = state.queue.length - 1;
@@ -848,11 +659,8 @@
     try {
       a.pause();
       a.removeAttribute("src");
-      // Không gọi a.load() — trên mobile hay bắn ended/error giả
-      a.removeAttribute("src");
       a.src = "";
     } catch (_) {}
-    // giữ suppress thêm chút cho event async
     clearTimeout(stopAll._t);
     stopAll._t = setTimeout(() => {
       state.suppressAudioEvents = false;
@@ -862,11 +670,12 @@
   function updateMediaSession(track) {
     if (!("mediaSession" in navigator) || !track) return;
     try {
+      const art = thumb(track);
       navigator.mediaSession.metadata = new MediaMetadata({
         title: track.title || "YTM",
-        artist: track.uploader || "YouTube",
-        album: "YTM",
-        artwork: [{ src: thumb(track), sizes: "512x512", type: "image/jpeg" }],
+        artist: track.uploader || "SoundCloud",
+        album: "SoundCloud",
+        artwork: art ? [{ src: art, sizes: "500x500", type: "image/jpeg" }] : [],
       });
       navigator.mediaSession.playbackState = state.isPlaying ? "playing" : "paused";
     } catch (_) {}
@@ -900,9 +709,17 @@
       if (pos >= 0 && pos + 1 < state.shuffleOrder.length) nextIdx = state.shuffleOrder[pos + 1];
       else return;
     }
-    if (nextIdx >= 0 && nextIdx < state.queue.length) {
-      prefetchStream(state.queue[nextIdx].id);
+    if (nextIdx >= 0 && nextIdx < state.queue.length) prefetchStream(state.queue[nextIdx].id);
+  }
+
+  function hasNextTrack() {
+    if (!state.queue.length) return false;
+    if (state.shuffle) {
+      if (!state.shuffleOrder.length) rebuildShuffle();
+      const pos = state.shuffleOrder.indexOf(state.index);
+      return pos >= 0 && pos < state.shuffleOrder.length - 1;
     }
+    return state.index < state.queue.length - 1;
   }
 
   function playAtIndex(i) {
@@ -921,9 +738,9 @@
     stopAll();
     state.isPlaying = false;
     state.mode = "none";
-    setStatus("Đang lấy stream…");
+    setStatus("Đang lấy stream SoundCloud…");
     const hadCache = !!getCachedStream(track.id);
-    if (!hadCache) setLoading(true, "Lấy stream audio…");
+    if (!hadCache) setLoading(true, "SoundCloud stream…");
     renderNow();
 
     try {
@@ -934,11 +751,9 @@
       prefetchNext();
     } catch (e) {
       if (token !== state.loadToken) return;
-      // 1 lần retry: xóa cache hỏng rồi lấy stream mới
       if (retry) {
         streamMem.delete(track.id);
         saveStreamCacheDisk();
-        setStatus("Thử stream lại…");
         try {
           const streamUrl = await resolveAudioUrl(track.id);
           if (token !== state.loadToken) return;
@@ -952,27 +767,16 @@
       state.isPlaying = false;
       setStatus("Không lấy được stream");
       renderNow();
-
-      const hasNext = hasNextTrack();
-      if (hasNext) {
+      if (hasNextTrack()) {
         toast("Bài này lỗi — sang bài tiếp");
         setTimeout(() => {
           if (token === state.loadToken) nextTrack({ fromError: true });
         }, 500);
       } else {
-        toast("Không phát được · queue không còn bài khác");
+        toast(e.message || "Không phát được");
+        showApiBanner(!state.streamApiOk);
       }
     }
-  }
-
-  function hasNextTrack() {
-    if (!state.queue.length) return false;
-    if (state.shuffle) {
-      if (!state.shuffleOrder.length) rebuildShuffle();
-      const pos = state.shuffleOrder.indexOf(state.index);
-      return pos >= 0 && pos < state.shuffleOrder.length - 1;
-    }
-    return state.index < state.queue.length - 1;
   }
 
   function playHtml5(url, track, token) {
@@ -988,7 +792,7 @@
         settled = true;
         state.suppressAudioEvents = false;
         state.isPlaying = true;
-        setStatus("▶ Streaming");
+        setStatus("▶ SoundCloud");
         updateMediaSession(track);
         renderNow();
         resolve();
@@ -1004,14 +808,12 @@
       a.onerror = () => fail(new Error("audio error"));
       try {
         a.src = url;
-        // load() optional — một số browser cần
         try {
           a.load();
         } catch (_) {}
       } catch (e) {
         return fail(e);
       }
-      // Cho browser nuốt event load/error giả rồi mới nghe event thật
       setTimeout(() => {
         if (token !== state.loadToken) return;
         state.suppressAudioEvents = false;
@@ -1022,7 +824,7 @@
       setTimeout(() => {
         if (!settled && token === state.loadToken && !a.paused) ok();
         else if (!settled && token === state.loadToken) fail(new Error("timeout play"));
-      }, 10000);
+      }, 12000);
     });
   }
 
@@ -1041,9 +843,7 @@
   }
 
   function nextTrack({ fromError = false } = {}) {
-    // Đang đổi bài / stop — bỏ qua next giả từ audio events
     if (state.suppressAudioEvents && !fromError) return;
-
     if (!state.queue.length) {
       if (!fromError) toast("Queue trống — search rồi bấm phát");
       return;
@@ -1066,7 +866,7 @@
         stopAll();
         setStatus("Đã hết hàng đợi");
         renderNow();
-        if (!fromError) toast("Đã hết hàng đợi · chọn bài khác hoặc bật shuffle");
+        if (!fromError) toast("Đã hết hàng đợi");
         return;
       }
       playAtIndex(state.index + 1);
@@ -1101,36 +901,40 @@
     toast(state.shuffle ? "Shuffle on" : "Shuffle off");
   }
 
-  async function showLyrics() {
-    const t = currentTrack();
-    if (!t) return toast("Chưa có bài đang phát");
-    setView("library");
-    closeNowPlaying();
-    $("#lyrics-meta").textContent = t.title;
-    $("#lyrics-body").textContent = "Đang tải lyrics…";
-    const text = await fetchLyrics(t);
-    $("#lyrics-body").textContent = text || "Không tìm thấy lyrics.";
-  }
-
   async function doSearch(q, { fromGenre = false } = {}) {
     q = (q || "").trim();
     if (!q) return;
     $("#search-input").value = q;
     setView(fromGenre ? "home" : "search");
     if ($("#list-title")) $("#list-title").textContent = fromGenre ? "Mood" : "Kết quả";
-    if ($("#list-sub")) $("#list-sub").textContent = `“${q}”`;
-    const cached = searchMem.get(q.toLowerCase().trim());
-    if (!(cached && cached.exp > Date.now())) setLoading(true, "Đang tìm…");
+    if ($("#list-sub")) $("#list-sub").textContent = `SoundCloud · “${q}”`;
+    const cached = searchMem.get(q.toLowerCase());
+    if (!(cached && cached.exp > Date.now())) setLoading(true, "Search SoundCloud…");
     $$(".genre-card").forEach((b) => b.classList.toggle("active", b.dataset.q === q));
     try {
       state.results = await searchTracks(q);
-      if ($("#list-sub")) $("#list-sub").textContent = `${state.results.length} bài · “${q}”`;
+      if ($("#list-sub")) $("#list-sub").textContent = `${state.results.length} bài · SoundCloud`;
       renderResults();
-      // warm first result stream
       if (state.results[0]) prefetchStream(state.results[0].id);
       if (!state.results.length) toast("Không tìm thấy");
     } catch (err) {
       toast(err.message || "Search lỗi");
+      showApiBanner(!state.streamApiOk);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadCharts() {
+    try {
+      setLoading(true, "SoundCloud charts…");
+      state.results = await scApiCharts();
+      if ($("#list-title")) $("#list-title").textContent = "Trending";
+      if ($("#list-sub")) $("#list-sub").textContent = "SoundCloud charts";
+      renderResults();
+    } catch (_) {
+      // fallback search
+      await doSearch("lofi chill", { fromGenre: true });
     } finally {
       setLoading(false);
     }
@@ -1152,25 +956,14 @@
     if ($(".d-seek")) $(".d-seek").value = v;
     const mp = $("#mini-progress");
     if (mp) mp.style.width = `${Math.min(100, (cur / dur) * 100)}%`;
-    try {
-      if ("mediaSession" in navigator && navigator.mediaSession.setPositionState) {
-        navigator.mediaSession.setPositionState({
-          duration: dur,
-          position: Math.min(cur, dur),
-          playbackRate: 1,
-        });
-      }
-    } catch (_) {}
   }
 
-  // Audio element events
   (() => {
     const a = audio();
     if (!a) return;
     a.addEventListener("ended", () => {
       if (state.suppressAudioEvents) return;
       if (state.mode !== "audio") return;
-      // Chỉ next khi nghe gần hết (tránh ended giả lúc load)
       if ((a.duration || 0) > 0 && a.currentTime < (a.duration || 0) * 0.85) return;
       nextTrack();
     });
@@ -1182,7 +975,6 @@
     });
     a.addEventListener("pause", () => {
       if (state.suppressAudioEvents) return;
-      // pause khi đổi src — không coi là user pause
       if (!a.src) return;
       state.isPlaying = false;
       updateMediaSession(currentTrack());
@@ -1192,14 +984,13 @@
     a.addEventListener("error", () => {
       if (state.suppressAudioEvents) return;
       if (state.mode !== "audio") return;
+      if (!a.currentSrc && !a.src) return;
       const t = currentTrack();
       if (!t) return;
-      // error lúc chưa có src hợp lệ
-      if (!a.currentSrc && !a.src) return;
       streamMem.delete(t.id);
       saveStreamCacheDisk();
       if (hasNextTrack()) {
-        toast("Stream hỏng — sang bài tiếp");
+        toast("Stream hỏng — next");
         setTimeout(() => nextTrack({ fromError: true }), 400);
       } else {
         toast("Không phát được bài này");
@@ -1207,9 +998,6 @@
         setStatus("Lỗi stream");
         renderNow();
       }
-    });
-    a.addEventListener("canplay", () => {
-      if (state.mode === "audio" && state.isPlaying) setStatus("▶ Streaming");
     });
   })();
 
@@ -1260,28 +1048,18 @@
     });
   });
   ["#btn-like", "#btn-np-like"].forEach((sel) => {
-    $(sel)?.addEventListener("click", () => {
-      const t = currentTrack();
-      if (!t) return;
-      state.likes = [t, ...state.likes.filter((x) => x.id !== t.id)];
-      save();
-      toast("👍 Liked");
-    });
+    $(sel)?.addEventListener("click", () => toast("♥ SoundCloud"));
   });
   ["#btn-dislike", "#btn-np-dislike"].forEach((sel) => {
-    $(sel)?.addEventListener("click", () => {
-      const t = currentTrack();
-      if (!t) return;
-      state.dislikes = [t, ...state.dislikes.filter((x) => x.id !== t.id)];
-      save();
-      toast("👎 Next");
-      nextTrack();
-    });
+    $(sel)?.addEventListener("click", () => nextTrack());
   });
 
-  $("#btn-lyrics")?.addEventListener("click", showLyrics);
-  $("#btn-np-lyrics")?.addEventListener("click", showLyrics);
-  $("#btn-lyrics-lib")?.addEventListener("click", showLyrics);
+  $("#btn-lyrics")?.addEventListener("click", () => toast("SoundCloud không có lyrics API"));
+  $("#btn-np-lyrics")?.addEventListener("click", () => toast("SoundCloud không có lyrics API"));
+  $("#btn-lyrics-lib")?.addEventListener("click", () => {
+    setView("library");
+    $("#lyrics-body").textContent = "SoundCloud không cung cấp lyrics.";
+  });
   $("#btn-np-queue")?.addEventListener("click", () => {
     closeNowPlaying();
     setView("queue");
@@ -1348,19 +1126,17 @@
     $("#btn-settings")?.click();
   });
   $("#btn-save-api")?.addEventListener("click", async () => {
-    const url = ($("#stream-api-input")?.value || "").trim();
-    setStreamApi(url);
+    setStreamApi($("#stream-api-input")?.value || "");
     setLoading(true, "Kiểm tra API…");
     const ok = await probeStreamApi();
     setLoading(false);
     if (ok) {
       showApiBanner(false);
-      toast("Stream API OK");
+      toast("SoundCloud API OK");
       setStatus(`API: ${ok}`);
       $("#settings-sheet")?.classList.add("hidden");
-    } else {
-      toast("API không trả /api/health — kiểm tra URL");
-    }
+      loadCharts();
+    } else toast("API không OK — kiểm tra URL");
   });
 
   $("#pl-create")?.addEventListener("submit", (e) => {
@@ -1380,20 +1156,12 @@
     const sheet = $("#np-sheet");
     if (!sheet) return;
     let startY = 0;
-    sheet.addEventListener(
-      "touchstart",
-      (e) => {
-        startY = e.touches[0].clientY;
-      },
-      { passive: true }
-    );
-    sheet.addEventListener(
-      "touchend",
-      (e) => {
-        if (e.changedTouches[0].clientY - startY > 80) closeNowPlaying();
-      },
-      { passive: true }
-    );
+    sheet.addEventListener("touchstart", (e) => {
+      startY = e.touches[0].clientY;
+    }, { passive: true });
+    sheet.addEventListener("touchend", (e) => {
+      if (e.changedTouches[0].clientY - startY > 80) closeNowPlaying();
+    }, { passive: true });
   })();
 
   if ("serviceWorker" in navigator) {
@@ -1407,7 +1175,6 @@
     return "Chào buổi tối";
   }
 
-  // Stream API: ?api=https://xxx.onrender.com  or localStorage
   (() => {
     const params = new URLSearchParams(location.search);
     const fromQuery = params.get("api");
@@ -1430,19 +1197,16 @@
   if ($("#greeting")) $("#greeting").textContent = greeting();
   if (state.queue.length && state.index < 0) state.index = 0;
   if (state.shuffle) rebuildShuffle();
-  const host = $("#yt-host");
-  if (host) host.style.display = "none";
   renderAll();
 
   probeStreamApi().then((base) => {
     if (!base) {
-      setStatus("Chưa có Stream API cloud");
+      setStatus("Cần Stream API SoundCloud");
       showApiBanner(true);
     } else {
       showApiBanner(false);
-      setStatus(`Stream API OK · ${base}`);
-      if (state.queue[0]) prefetchStream(state.queue[Math.max(0, state.index)].id);
-      doSearch("lofi hip hop", { fromGenre: true });
+      setStatus(`SoundCloud API · ${base}`);
+      loadCharts();
     }
   });
 })();

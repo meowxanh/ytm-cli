@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
-  <title>YTM Music</title>
-  <meta name="description" content="Nghe nhạc YouTube online" />
+  <title>YTM · SoundCloud</title>
+  <meta name="description" content="Nghe nhạc SoundCloud online" />
   <meta name="theme-color" content="#0c0614" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -23,7 +23,7 @@
     <aside class="sidebar desktop-only">
       <div class="brand">
         <span class="brand-mark">♪</span>
-        <div><strong>YTM</strong><small>Music</small></div>
+        <div><strong>YTM</strong><small>SoundCloud</small></div>
       </div>
       <nav class="nav">
         <button class="nav-btn active" data-view="home">Trang chủ</button>
@@ -44,14 +44,14 @@
         <header class="page-header">
           <div>
             <p class="eyebrow" id="greeting">Xin chào</p>
-            <h1 class="page-title">Nghe gì hôm nay?</h1>
+            <h1 class="page-title">SoundCloud</h1>
           </div>
           <button type="button" class="avatar-btn" id="btn-settings" aria-label="Cài đặt">⚙</button>
         </header>
 
         <button type="button" class="search-launch" id="btn-open-search" data-view="search">
           <span class="search-ico">⌕</span>
-          <span>Tìm bài hát, nghệ sĩ, link…</span>
+          <span>Tìm trên SoundCloud, dán link…</span>
         </button>
 
         <button type="button" class="resume-card" id="btn-resume-session" hidden>
@@ -66,15 +66,15 @@
           <div class="block-head"><h2>Mood</h2></div>
           <div class="genre-scroll" id="genre-row">
             <button type="button" class="genre-card g1" data-q="lofi hip hop"><span>Lo-fi</span></button>
-            <button type="button" class="genre-card g2" data-q="nhạc trẻ việt nam"><span>V-Pop</span></button>
-            <button type="button" class="genre-card g3" data-q="bolero hay nhất"><span>Bolero</span></button>
-            <button type="button" class="genre-card g4" data-q="us uk hits"><span>US-UK</span></button>
-            <button type="button" class="genre-card g5" data-q="kpop playlist"><span>K-Pop</span></button>
-            <button type="button" class="genre-card g6" data-q="edm party mix"><span>EDM</span></button>
-            <button type="button" class="genre-card g7" data-q="chill acoustic"><span>Acoustic</span></button>
-            <button type="button" class="genre-card g8" data-q="rap việt"><span>Rap Việt</span></button>
-            <button type="button" class="genre-card g9" data-q="jazz piano"><span>Jazz</span></button>
-            <button type="button" class="genre-card g10" data-q="workout gym music"><span>Gym</span></button>
+            <button type="button" class="genre-card g2" data-q="deep house"><span>Deep House</span></button>
+            <button type="button" class="genre-card g3" data-q="techno mix"><span>Techno</span></button>
+            <button type="button" class="genre-card g4" data-q="chill rnb"><span>R&B</span></button>
+            <button type="button" class="genre-card g5" data-q="indie pop"><span>Indie</span></button>
+            <button type="button" class="genre-card g6" data-q="drum and bass"><span>DnB</span></button>
+            <button type="button" class="genre-card g7" data-q="ambient sleep"><span>Ambient</span></button>
+            <button type="button" class="genre-card g8" data-q="hip hop beats"><span>Hip-Hop</span></button>
+            <button type="button" class="genre-card g9" data-q="jazz lounge"><span>Jazz</span></button>
+            <button type="button" class="genre-card g10" data-q="workout gym"><span>Gym</span></button>
           </div>
         </div>
 
@@ -93,7 +93,7 @@
         </header>
         <form id="search-form" class="search-box ios" autocomplete="off">
           <span class="search-ico">⌕</span>
-          <input id="search-input" type="search" enterkeyhint="search" placeholder="Bài hát, nghệ sĩ, link…" />
+          <input id="search-input" type="search" enterkeyhint="search" placeholder="SoundCloud: bài, artist, link…" />
           <button type="submit" class="search-go">Tìm</button>
         </form>
         <div id="search-results" class="track-list ios-list"></div>
@@ -296,7 +296,7 @@
         <input id="stream-api-input" type="url" placeholder="https://ytm-stream-xxxx.onrender.com" style="padding:12px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);outline:none;width:100%" />
       </label>
       <p class="muted sm" id="stream-api-hint" style="margin:0 0 8px;line-height:1.45">
-        API public hay chết. Deploy free 1 lần trên Render (xem README) rồi dán URL vào đây.
+        Stream API SoundCloud (nhẹ, không yt-dlp). Local: run-stream.ps1 · Cloud: Render free.
       </p>
       <button type="button" class="btn-block primary" id="btn-save-api">Lưu API</button>
       <label class="setting-row">
@@ -310,12 +310,13 @@
 
   <div id="api-banner" class="api-banner" hidden>
     <div class="api-banner-inner">
-      <strong>Cần Stream API (cloud)</strong>
-      <p>Không dùng PC. Deploy free 1 lần → dán URL vào Cài đặt ⚙</p>
+      <strong>YTM · SoundCloud</strong>
+      <p>Bật Stream API (SoundCloud, nhẹ hơn YouTube). Local 1 lệnh hoặc cloud free.</p>
       <div class="api-banner-actions">
-        <a class="btn-block primary" id="btn-open-render" href="https://dashboard.render.com/select-repo?type=blueprint" target="_blank" rel="noopener">Deploy free trên Render</a>
-        <button type="button" class="btn-block ghost" id="btn-open-api-settings">Nhập URL API</button>
+        <button type="button" class="btn-block primary" id="btn-open-api-settings">Nhập URL API</button>
+        <a class="btn-block ghost" id="btn-open-render" href="https://dashboard.render.com/select-repo?type=blueprint" target="_blank" rel="noopener">Deploy free Render</a>
       </div>
+      <p class="muted sm" style="margin-top:12px;line-height:1.4">Local: <code>.\run-stream.ps1</code> rồi refresh — tự nhận <code>127.0.0.1:8765</code></p>
     </div>
   </div>
 
