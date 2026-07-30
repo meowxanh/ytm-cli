@@ -929,6 +929,8 @@
     if ($(".d-cur")) $(".d-cur").textContent = fmt(cur);
     if ($(".d-dur")) $(".d-dur").textContent = fmt(dur);
     if ($(".d-seek")) $(".d-seek").value = v;
+    const mp = $("#mini-progress");
+    if (mp) mp.style.width = `${Math.min(100, (cur / dur) * 100)}%`;
     try {
       if ("mediaSession" in navigator && navigator.mediaSession.setPositionState) {
         navigator.mediaSession.setPositionState({
