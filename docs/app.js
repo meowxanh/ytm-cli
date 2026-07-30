@@ -39,6 +39,8 @@
     duration: 0,
     mode: "none",
     loadToken: 0,
+    /** Bỏ qua ended/error khi stop/load đổi bài (tránh nextTrack giả → “hết queue”) */
+    suppressAudioEvents: false,
   };
 
   // in-memory stream cache: id -> { url, exp }
@@ -750,11 +752,19 @@
   function stopAll() {
     const a = audio();
     if (!a) return;
+    state.suppressAudioEvents = true;
     try {
       a.pause();
       a.removeAttribute("src");
-      a.load();
+      // Không gọi a.load() — trên mobile hay bắn ended/error giả
+      a.removeAttribute("src");
+      a.src = "";
     } catch (_) {}
+    // giữ suppress thêm chút cho event async
+    clearTimeout(stopAll._t);
+    stopAll._t = setTimeout(() => {
+      state.suppressAudioEvents = false;
+    }, 400);
   }
 
   function updateMediaSession(track) {
@@ -878,11 +888,13 @@
       const a = audio();
       if (!a) return reject(new Error("no audio"));
       state.mode = "audio";
+      state.suppressAudioEvents = true;
       a.volume = state.volume / 100;
       let settled = false;
       const ok = () => {
         if (settled || token !== state.loadToken) return;
         settled = true;
+        state.suppressAudioEvents = false;
         state.isPlaying = true;
         setStatus("▶ Streaming");
         updateMediaSession(track);
@@ -890,23 +902,35 @@
         resolve();
       };
       const fail = (err) => {
-        if (settled) return;
+        if (settled || token !== state.loadToken) return;
         settled = true;
-        // invalidate cache on bad url
+        state.suppressAudioEvents = false;
         streamMem.delete(track.id);
         saveStreamCacheDisk();
         reject(err || new Error("audio error"));
       };
       a.onerror = () => fail(new Error("audio error"));
-      a.src = url;
-      a.load();
-      const p = a.play();
-      if (p && p.then) p.then(ok).catch(fail);
+      try {
+        a.src = url;
+        // load() optional — một số browser cần
+        try {
+          a.load();
+        } catch (_) {}
+      } catch (e) {
+        return fail(e);
+      }
+      // Cho browser nuốt event load/error giả rồi mới nghe event thật
+      setTimeout(() => {
+        if (token !== state.loadToken) return;
+        state.suppressAudioEvents = false;
+        const p = a.play();
+        if (p && p.then) p.then(ok).catch(fail);
+      }, 50);
       a.addEventListener("playing", ok, { once: true });
       setTimeout(() => {
-        if (!settled && !a.paused) ok();
-        else if (!settled) fail(new Error("timeout play"));
-      }, 8000);
+        if (!settled && token === state.loadToken && !a.paused) ok();
+        else if (!settled && token === state.loadToken) fail(new Error("timeout play"));
+      }, 10000);
     });
   }
 
@@ -925,6 +949,9 @@
   }
 
   function nextTrack({ fromError = false } = {}) {
+    // Đang đổi bài / stop — bỏ qua next giả từ audio events
+    if (state.suppressAudioEvents && !fromError) return;
+
     if (!state.queue.length) {
       if (!fromError) toast("Queue trống — search rồi bấm phát");
       return;
@@ -1048,35 +1075,47 @@
   (() => {
     const a = audio();
     if (!a) return;
-    a.addEventListener("ended", () => nextTrack());
+    a.addEventListener("ended", () => {
+      if (state.suppressAudioEvents) return;
+      if (state.mode !== "audio") return;
+      // Chỉ next khi nghe gần hết (tránh ended giả lúc load)
+      if ((a.duration || 0) > 0 && a.currentTime < (a.duration || 0) * 0.85) return;
+      nextTrack();
+    });
     a.addEventListener("play", () => {
+      if (state.suppressAudioEvents) return;
       state.isPlaying = true;
       updateMediaSession(currentTrack());
       renderNow();
     });
     a.addEventListener("pause", () => {
+      if (state.suppressAudioEvents) return;
+      // pause khi đổi src — không coi là user pause
+      if (!a.src) return;
       state.isPlaying = false;
       updateMediaSession(currentTrack());
       renderNow();
     });
     a.addEventListener("timeupdate", tickProgress);
     a.addEventListener("error", () => {
+      if (state.suppressAudioEvents) return;
       if (state.mode !== "audio") return;
       const t = currentTrack();
       if (!t) return;
+      // error lúc chưa có src hợp lệ
+      if (!a.currentSrc && !a.src) return;
       streamMem.delete(t.id);
       saveStreamCacheDisk();
       if (hasNextTrack()) {
         toast("Stream hỏng — sang bài tiếp");
         setTimeout(() => nextTrack({ fromError: true }), 400);
       } else {
-        toast("Stream hỏng · không còn bài trong queue");
+        toast("Không phát được bài này");
         state.isPlaying = false;
         setStatus("Lỗi stream");
         renderNow();
       }
     });
-    // Can play through faster feedback
     a.addEventListener("canplay", () => {
       if (state.mode === "audio" && state.isPlaying) setStatus("▶ Streaming");
     });

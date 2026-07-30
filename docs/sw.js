@@ -1,5 +1,5 @@
 /* YTM static shell cache */
-const CACHE = "ytm-static-v4";
+const CACHE = "ytm-static-v5";
 const SHELL = ["./", "./index.html", "./app.css", "./app.js", "./manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
