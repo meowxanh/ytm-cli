@@ -1,25 +1,21 @@
-/* YTM Static — stream online (HTML5 audio first for iOS background), no PC, no file download */
+/* YTM — HTML5 audio only (no YouTube embed). Parallel APIs + cache for speed. */
 (() => {
-  const STORAGE_KEY = "ytm_static_v1";
+  const STORAGE_KEY = "ytm_static_v2";
+  const STREAM_CACHE_KEY = "ytm_stream_cache_v1";
+  const STREAM_TTL_MS = 25 * 60 * 1000; // stream URLs expire; cache ~25 min
 
+  // Lean instance lists (race, not sequential)
   const INVIDIOUS = [
+    "https://yewtu.be",
     "https://inv.nadeko.net",
     "https://invidious.nerdvpn.de",
-    "https://yewtu.be",
-    "https://invidious.flokinet.to",
     "https://vid.puffyan.us",
-    "https://invidious.privacyredirect.com",
-    "https://iv.ggtyler.dev",
   ];
   const PIPED = [
-    "https://pipedapi.kavin.rocks",
     "https://api.piped.private.coffee",
+    "https://pipedapi.kavin.rocks",
     "https://pipedapi.reallyaweso.me",
-    "https://pipedapi.leptons.xyz",
-    "https://pipedapi.adminforge.de",
-    "https://pipedapi.nosebs.ru",
     "https://pipedapi.r4fo.com",
-    "https://pipedapi.syncpundit.io",
   ];
   const COBALT = [
     "https://api.cobalt.tools/",
@@ -41,15 +37,15 @@
     activePlaylist: null,
     isPlaying: false,
     duration: 0,
-    yt: null,
-    ytReady: false,
-    pendingId: null,
-    mode: "none", // "audio" | "embed"
+    mode: "none",
     loadToken: 0,
   };
 
-  const audio = () => document.getElementById("audio-el");
+  // in-memory stream cache: id -> { url, exp }
+  const streamMem = new Map();
+  const searchMem = new Map(); // q -> { tracks, exp }
 
+  const audio = () => document.getElementById("audio-el");
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => [...document.querySelectorAll(s)];
 
@@ -59,7 +55,7 @@
     el.textContent = msg;
     el.classList.remove("hidden");
     clearTimeout(toast._t);
-    toast._t = setTimeout(() => el.classList.add("hidden"), 2800);
+    toast._t = setTimeout(() => el.classList.add("hidden"), 2600);
   }
 
   function setStatus(text) {
@@ -122,7 +118,7 @@
 
   function load() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(STORAGE_KEY) || localStorage.getItem("ytm_static_v1");
       if (!raw) return;
       const d = JSON.parse(raw);
       state.queue = d.queue || [];
@@ -137,19 +133,60 @@
     } catch (_) {}
   }
 
+  function loadStreamCacheDisk() {
+    try {
+      const raw = localStorage.getItem(STREAM_CACHE_KEY);
+      if (!raw) return;
+      const obj = JSON.parse(raw);
+      const now = Date.now();
+      Object.entries(obj).forEach(([id, v]) => {
+        if (v?.url && v.exp > now) streamMem.set(id, v);
+      });
+    } catch (_) {}
+  }
+
+  function saveStreamCacheDisk() {
+    try {
+      const now = Date.now();
+      const obj = {};
+      streamMem.forEach((v, id) => {
+        if (v.exp > now) obj[id] = v;
+      });
+      localStorage.setItem(STREAM_CACHE_KEY, JSON.stringify(obj));
+    } catch (_) {}
+  }
+
+  function getCachedStream(id) {
+    const hit = streamMem.get(id);
+    if (hit && hit.exp > Date.now() && hit.url) return hit.url;
+    if (hit) streamMem.delete(id);
+    return null;
+  }
+
+  function setCachedStream(id, url) {
+    if (!id || !url) return;
+    streamMem.set(id, { url, exp: Date.now() + STREAM_TTL_MS });
+    saveStreamCacheDisk();
+  }
+
   function extractId(text) {
     text = (text || "").trim();
     const m = text.match(
       /(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/|live\/)|music\.youtube\.com\/watch\?v=)([A-Za-z0-9_-]{11})/
     );
-    if (m) return m[1];
+    if (m) return m.group ? m[1] : m[1];
     if (/^[A-Za-z0-9_-]{11}$/.test(text)) return text;
     return null;
   }
 
   function normalizeTrack(raw) {
     if (!raw) return null;
-    const id = raw.id || raw.videoId || extractId(raw.url || raw.videoId || "") || "";
+    let id = raw.id || raw.videoId || extractId(raw.url || "") || "";
+    if (typeof id === "string" && id.includes("watch")) {
+      const m = id.match(/[?&]v=([A-Za-z0-9_-]{11})/);
+      if (m) id = m[1];
+    }
+    id = String(id).replace("/watch?v=", "").slice(0, 11);
     if (!id || id.length < 6) return null;
     let thumbnail = raw.thumbnail || "";
     if (!thumbnail && Array.isArray(raw.videoThumbnails) && raw.videoThumbnails.length) {
@@ -160,21 +197,27 @@
       thumbnail = last.url || last.src || "";
     }
     return {
-      id: String(id).slice(0, 11),
+      id,
       title: raw.title || "Unknown",
-      uploader: raw.uploader || raw.author || raw.channelName || raw.channel || "",
+      uploader: raw.uploader || raw.author || raw.channelName || raw.channel || raw.uploaderName || "",
       duration: raw.duration ?? raw.lengthSeconds ?? null,
-      duration_str: raw.duration_str || (raw.lengthSeconds != null ? fmt(raw.lengthSeconds) : raw.duration != null ? fmt(raw.duration) : "--:--"),
-      thumbnail: thumbnail || `https://i.ytimg.com/vi/${String(id).slice(0, 11)}/hqdefault.jpg`,
-      url: `https://www.youtube.com/watch?v=${String(id).slice(0, 11)}`,
+      duration_str:
+        raw.duration_str ||
+        (raw.lengthSeconds != null
+          ? fmt(raw.lengthSeconds)
+          : raw.duration != null
+            ? fmt(raw.duration)
+            : "--:--"),
+      thumbnail: thumbnail || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
+      url: `https://www.youtube.com/watch?v=${id}`,
     };
   }
 
-  async function fetchJson(url, timeout = 10000) {
+  async function fetchJson(url, timeout = 6000, opts = {}) {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeout);
     try {
-      const res = await fetch(url, { signal: ctrl.signal });
+      const res = await fetch(url, { signal: ctrl.signal, ...opts });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return await res.json();
     } finally {
@@ -182,46 +225,113 @@
     }
   }
 
-  async function searchInvidious(q) {
-    for (const base of INVIDIOUS) {
-      try {
-        const data = await fetchJson(
-          `${base}/api/v1/search?q=${encodeURIComponent(q)}&type=video`,
-          9000
-        );
-        if (!Array.isArray(data)) continue;
-        const tracks = data.map(normalizeTrack).filter(Boolean).slice(0, 15);
-        if (tracks.length) return tracks;
-      } catch (_) {}
-    }
-    return null;
+  /** First fulfilled success wins; ignore failures. */
+  function raceOk(promises) {
+    return new Promise((resolve, reject) => {
+      if (!promises.length) return reject(new Error("empty"));
+      let left = promises.length;
+      let settled = false;
+      promises.forEach((p) => {
+        Promise.resolve(p)
+          .then((v) => {
+            if (settled) return;
+            if (v == null || v === false || (Array.isArray(v) && !v.length)) {
+              left -= 1;
+              if (left === 0) reject(new Error("all failed"));
+              return;
+            }
+            settled = true;
+            resolve(v);
+          })
+          .catch(() => {
+            left -= 1;
+            if (!settled && left === 0) reject(new Error("all failed"));
+          });
+      });
+    });
   }
 
-  async function searchPiped(q) {
-    for (const base of PIPED) {
-      try {
-        const data = await fetchJson(
-          `${base}/search?q=${encodeURIComponent(q)}&filter=videos`,
-          9000
-        );
-        const items = data.items || data || [];
-        if (!Array.isArray(items)) continue;
-        const tracks = items
-          .map((it) =>
-            normalizeTrack({
-              id: (it.url || "").replace("/watch?v=", "").replace("/watch/", "") || it.id,
-              title: it.title,
-              uploader: it.uploaderName || it.uploader,
-              duration: it.duration,
-              thumbnail: it.thumbnail,
-            })
-          )
-          .filter(Boolean)
-          .slice(0, 15);
-        if (tracks.length) return tracks;
-      } catch (_) {}
-    }
-    return null;
+  function pickAudioFromPiped(data) {
+    const list = (data.audioStreams || []).slice();
+    if (!list.length) return null;
+    // Prefer mid quality m4a for faster start (not highest bitrate)
+    const m4a = list.filter((s) => /mp4|m4a|aac/i.test(String(s.mimeType || s.format || "")));
+    const pool = m4a.length ? m4a : list;
+    pool.sort((a, b) => (a.bitrate || 0) - (b.bitrate || 0));
+    // pick around 96–160kbps if possible
+    const mid =
+      pool.find((s) => (s.bitrate || 0) >= 90000 && (s.bitrate || 0) <= 170000) ||
+      pool[Math.floor(pool.length / 2)] ||
+      pool[0];
+    return mid?.url || null;
+  }
+
+  function pickAudioFromInv(data) {
+    const formats = data.adaptiveFormats || [];
+    const aud = formats.filter((f) => String(f.type || f.mimeType || "").includes("audio"));
+    if (!aud.length) return null;
+    const m4a = aud.filter((f) => /mp4|m4a|aac/i.test(String(f.type || "")));
+    const pool = m4a.length ? m4a : aud;
+    pool.sort((a, b) => (a.bitrate || 0) - (b.bitrate || 0));
+    const mid =
+      pool.find((s) => (s.bitrate || 0) >= 90000 && (s.bitrate || 0) <= 170000) ||
+      pool[Math.floor(pool.length / 2)] ||
+      pool[0];
+    return mid?.url || null;
+  }
+
+  async function resolveAudioUrl(videoId) {
+    const cached = getCachedStream(videoId);
+    if (cached) return cached;
+
+    const tasks = [];
+
+    // Cobalt (often fast)
+    COBALT.forEach((base) => {
+      tasks.push(
+        (async () => {
+          const res = await fetch(base, {
+            method: "POST",
+            headers: { Accept: "application/json", "Content-Type": "application/json" },
+            body: JSON.stringify({
+              url: `https://www.youtube.com/watch?v=${videoId}`,
+              downloadMode: "audio",
+              audioFormat: "best",
+            }),
+            signal: AbortSignal.timeout?.(7000),
+          });
+          if (!res.ok) throw new Error("cobalt");
+          const data = await res.json();
+          const u = data.url || data.tunnel || data.audio;
+          if (typeof u === "string" && u.startsWith("http")) return u;
+          throw new Error("cobalt empty");
+        })()
+      );
+    });
+
+    PIPED.forEach((base) => {
+      tasks.push(
+        fetchJson(`${base}/streams/${videoId}`, 6500).then((data) => {
+          const u = pickAudioFromPiped(data);
+          if (!u) throw new Error("piped empty");
+          return u;
+        })
+      );
+    });
+
+    INVIDIOUS.forEach((base) => {
+      tasks.push(
+        fetchJson(`${base}/api/v1/videos/${videoId}`, 6500).then((data) => {
+          const u = pickAudioFromInv(data);
+          if (!u) throw new Error("inv empty");
+          return u;
+        })
+      );
+    });
+
+    const url = await raceOk(tasks);
+    setCachedStream(videoId, url);
+    return url;
   }
 
   async function searchTracks(q) {
@@ -236,19 +346,56 @@
         }),
       ];
     }
-    let tracks = await searchInvidious(q);
-    if (!tracks) tracks = await searchPiped(q);
-    if (!tracks || !tracks.length) throw new Error("Search lỗi — thử lại sau (mạng / API public)");
+
+    const key = q.toLowerCase().trim();
+    const hit = searchMem.get(key);
+    if (hit && hit.exp > Date.now()) return hit.tracks;
+
+    const tasks = [];
+    INVIDIOUS.forEach((base) => {
+      tasks.push(
+        fetchJson(`${base}/api/v1/search?q=${encodeURIComponent(q)}&type=video`, 5500).then((data) => {
+          if (!Array.isArray(data)) throw new Error("bad");
+          const tracks = data.map(normalizeTrack).filter(Boolean).slice(0, 15);
+          if (!tracks.length) throw new Error("empty");
+          return tracks;
+        })
+      );
+    });
+    PIPED.forEach((base) => {
+      tasks.push(
+        fetchJson(`${base}/search?q=${encodeURIComponent(q)}&filter=videos`, 5500).then((data) => {
+          const items = data.items || data || [];
+          if (!Array.isArray(items)) throw new Error("bad");
+          const tracks = items
+            .map((it) =>
+              normalizeTrack({
+                id: (it.url || "").replace("/watch?v=", "").replace("/watch/", "") || it.id,
+                title: it.title,
+                uploader: it.uploaderName || it.uploader,
+                duration: it.duration,
+                thumbnail: it.thumbnail,
+              })
+            )
+            .filter(Boolean)
+            .slice(0, 15);
+          if (!tracks.length) throw new Error("empty");
+          return tracks;
+        })
+      );
+    });
+
+    const tracks = await raceOk(tasks);
+    searchMem.set(key, { tracks, exp: Date.now() + 5 * 60 * 1000 });
     return tracks;
   }
 
   async function fetchLyrics(track) {
     try {
       const q = `${track.uploader || ""} ${track.title || ""}`.trim();
-      const res = await fetch(
-        `https://lrclib.net/api/search?q=${encodeURIComponent(q)}`,
-        { headers: { "User-Agent": "ytm-static/1.0" } }
-      );
+      const res = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(q)}`, {
+        headers: { "User-Agent": "ytm-static/2.0" },
+      });
       if (!res.ok) return null;
       const results = await res.json();
       if (!results?.length) return null;
@@ -285,7 +432,7 @@
     $$(".nav-btn").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
     $$(".tabbar .tab").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
     $$(".view").forEach((v) => v.classList.toggle("active", v.id === `view-${name}`));
-    if (name === "search") setTimeout(() => $("#search-input")?.focus(), 150);
+    if (name === "search") setTimeout(() => $("#search-input")?.focus(), 120);
   }
 
   function openNowPlaying() {
@@ -314,7 +461,7 @@
   function rowHTML(t, i, { active = false } = {}) {
     return `
       <div class="track-row ${active ? "active" : ""}" data-id="${t.id}" data-idx="${i}">
-        <img class="art" src="${thumb(t)}" alt="" loading="lazy" />
+        <img class="art" src="${thumb(t)}" alt="" loading="lazy" decoding="async" />
         <div class="meta">
           <div class="t-title">${escapeHtml(t.title)}</div>
           <div class="t-sub">${escapeHtml(t.uploader || "YouTube")} · ${t.duration_str || fmt(t.duration)}</div>
@@ -357,7 +504,7 @@
   function renderResults() {
     const html = state.results.length
       ? state.results.map((t, i) => rowHTML(t, i)).join("")
-      : `<div class="empty-state">Search hoặc chọn chủ đề.</div>`;
+      : `<div class="empty-state">Search hoặc chọn mood.</div>`;
     ["#track-grid", "#search-results"].forEach((sel) => {
       const el = $(sel);
       if (!el) return;
@@ -528,11 +675,8 @@
       } else resume.hidden = true;
     }
 
-    try {
-      if (state.mode === "embed" && state.yt && state.ytReady) state.yt.setVolume(state.volume);
-      const a = audio();
-      if (a) a.volume = state.volume / 100;
-    } catch (_) {}
+    const a = audio();
+    if (a) a.volume = state.volume / 100;
   }
 
   function renderAll() {
@@ -552,6 +696,8 @@
     save();
     renderQueue();
     renderNow();
+    // prefetch stream for queued track
+    prefetchStream(track.id);
     toast("＋ Queue");
   }
 
@@ -583,24 +729,13 @@
     save();
   }
 
-  function setEmbedVisible(show) {
-    const wrap = $(".np-art-wrap");
-    const host = $("#yt-host");
-    if (wrap) wrap.classList.toggle("mode-embed", !!show);
-    if (host) host.classList.toggle("show", !!show);
-  }
-
   function stopAll() {
     const a = audio();
-    if (a) {
-      try {
-        a.pause();
-        a.removeAttribute("src");
-        a.load();
-      } catch (_) {}
-    }
+    if (!a) return;
     try {
-      state.yt?.stopVideo?.();
+      a.pause();
+      a.removeAttribute("src");
+      a.load();
     } catch (_) {}
   }
 
@@ -611,9 +746,7 @@
         title: track.title || "YTM",
         artist: track.uploader || "YouTube",
         album: "YTM",
-        artwork: [
-          { src: thumb(track), sizes: "512x512", type: "image/jpeg" },
-        ],
+        artwork: [{ src: thumb(track), sizes: "512x512", type: "image/jpeg" }],
       });
       navigator.mediaSession.playbackState = state.isPlaying ? "playing" : "paused";
     } catch (_) {}
@@ -628,66 +761,28 @@
       navigator.mediaSession.setActionHandler("nexttrack", () => nextTrack());
       navigator.mediaSession.setActionHandler("seekto", (d) => {
         if (d.seekTime == null) return;
-        if (state.mode === "audio") {
-          const a = audio();
-          if (a) a.currentTime = d.seekTime;
-        } else if (state.yt) {
-          state.yt.seekTo(d.seekTime, true);
-        }
+        const a = audio();
+        if (a) a.currentTime = d.seekTime;
       });
     } catch (_) {}
   }
 
-  async function resolveAudioUrl(videoId) {
-    // 1) Cobalt API
-    for (const base of COBALT) {
-      try {
-        const res = await fetch(base, {
-          method: "POST",
-          headers: {
-            Accept: "application/json",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            url: `https://www.youtube.com/watch?v=${videoId}`,
-            downloadMode: "audio",
-            audioFormat: "best",
-          }),
-        });
-        if (!res.ok) continue;
-        const data = await res.json();
-        const u = data.url || data.tunnel || data.audio;
-        if (u && typeof u === "string" && u.startsWith("http")) return u;
-      } catch (_) {}
-    }
+  function prefetchStream(id) {
+    if (!id || getCachedStream(id)) return;
+    resolveAudioUrl(id).catch(() => {});
+  }
 
-    // 2) Piped streams
-    for (const base of PIPED) {
-      try {
-        const data = await fetchJson(`${base}/streams/${videoId}`, 10000);
-        const list = (data.audioStreams || []).slice();
-        list.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-        // Prefer m4a/mp4 for iOS
-        const prefer =
-          list.find((s) => /mp4|m4a|aac/i.test(s.mimeType || s.format || "")) || list[0];
-        if (prefer?.url) return prefer.url;
-      } catch (_) {}
+  function prefetchNext() {
+    if (!state.queue.length) return;
+    let nextIdx = state.index + 1;
+    if (state.shuffle && state.shuffleOrder.length) {
+      const pos = state.shuffleOrder.indexOf(state.index);
+      if (pos >= 0 && pos + 1 < state.shuffleOrder.length) nextIdx = state.shuffleOrder[pos + 1];
+      else return;
     }
-
-    // 3) Invidious adaptive audio
-    for (const base of INVIDIOUS) {
-      try {
-        const data = await fetchJson(`${base}/api/v1/videos/${videoId}`, 10000);
-        const formats = data.adaptiveFormats || [];
-        const aud = formats
-          .filter((f) => String(f.type || f.mimeType || "").includes("audio"))
-          .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-        const prefer =
-          aud.find((f) => /mp4|m4a|aac/i.test(String(f.type || ""))) || aud[0];
-        if (prefer?.url) return prefer.url;
-      } catch (_) {}
+    if (nextIdx >= 0 && nextIdx < state.queue.length) {
+      prefetchStream(state.queue[nextIdx].id);
     }
-    return null;
   }
 
   function playAtIndex(i) {
@@ -706,90 +801,67 @@
     stopAll();
     state.isPlaying = false;
     state.mode = "none";
-    setEmbedVisible(false);
-    setStatus("Đang lấy stream audio…");
-    setLoading(true, "Chuẩn bị nghe online…");
+    setStatus("Đang lấy stream…");
+    // lighter loading: only overlay if no cache
+    const hadCache = !!getCachedStream(track.id);
+    if (!hadCache) setLoading(true, "Lấy stream audio…");
     renderNow();
 
-    let streamUrl = null;
     try {
-      streamUrl = await resolveAudioUrl(track.id);
-    } catch (_) {}
-
-    if (token !== state.loadToken) return;
-
-    if (streamUrl) {
-      try {
-        await playHtml5(streamUrl, track, token);
-        setLoading(false);
-        return;
-      } catch (e) {
-        console.warn("html5 audio failed", e);
-      }
+      const streamUrl = await resolveAudioUrl(track.id);
+      if (token !== state.loadToken) return;
+      await playHtml5(streamUrl, track, token);
+      setLoading(false);
+      prefetchNext();
+    } catch (e) {
+      if (token !== state.loadToken) return;
+      setLoading(false);
+      state.isPlaying = false;
+      setStatus("Không lấy được stream");
+      toast("Stream lỗi — thử bài khác");
+      renderNow();
+      // auto skip after short delay
+      setTimeout(() => {
+        if (token === state.loadToken) nextTrack();
+      }, 700);
     }
-
-    // Fallback embed (background thường không được trên iOS)
-    setLoading(false);
-    setStatus("Embed (thoát app có thể tắt)");
-    toast("Stream audio lỗi — fallback Embed (nền kém hơn)");
-    playEmbed(track.id);
   }
 
   function playHtml5(url, track, token) {
     return new Promise((resolve, reject) => {
       const a = audio();
-      if (!a) return reject(new Error("no audio el"));
+      if (!a) return reject(new Error("no audio"));
       state.mode = "audio";
-      setEmbedVisible(false);
       a.volume = state.volume / 100;
       let settled = false;
       const ok = () => {
         if (settled || token !== state.loadToken) return;
         settled = true;
         state.isPlaying = true;
-        setStatus("Audio · nghe nền OK hơn");
+        setStatus("▶ Streaming");
         updateMediaSession(track);
         renderNow();
         resolve();
       };
-      const fail = (e) => {
+      const fail = (err) => {
         if (settled) return;
         settled = true;
-        reject(e || new Error("audio error"));
+        // invalidate cache on bad url
+        streamMem.delete(track.id);
+        saveStreamCacheDisk();
+        reject(err || new Error("audio error"));
       };
       a.onerror = () => fail(new Error("audio error"));
       a.src = url;
       a.load();
-      a.play().then(ok).catch(fail);
-      // iOS sometimes fires playing without play() promise resolving cleanly
+      const p = a.play();
+      if (p && p.then) p.then(ok).catch(fail);
       a.addEventListener("playing", ok, { once: true });
       setTimeout(() => {
-        if (!settled && !a.paused && a.currentTime >= 0) ok();
-      }, 2000);
+        if (!settled && !a.paused) ok();
+        else if (!settled) fail(new Error("timeout play"));
+      }, 8000);
     });
-  }
-
-  function playEmbed(videoId) {
-    state.mode = "embed";
-    setEmbedVisible(true);
-    if (!state.ytReady || !state.yt) {
-      state.pendingId = videoId;
-      setStatus("Đang khởi tạo player…");
-      return;
-    }
-    try {
-      state.yt.loadVideoById(videoId);
-      state.yt.setVolume(state.volume);
-      state.yt.unMute?.();
-      state.yt.playVideo();
-      state.isPlaying = true;
-      setStatus("Embed · thoát app dễ tắt");
-      updateMediaSession(currentTrack());
-      renderNow();
-    } catch (e) {
-      toast("Không phát được video");
-      setStatus("Lỗi phát");
-    }
   }
 
   function togglePlay() {
@@ -797,27 +869,13 @@
       if (state.queue.length) playAtIndex(Math.max(0, state.index));
       return;
     }
-    if (state.mode === "audio") {
-      const a = audio();
-      if (!a?.src) {
-        playTrackOnline(currentTrack());
-        return;
-      }
-      if (a.paused) a.play().catch(() => playTrackOnline(currentTrack()));
-      else a.pause();
+    const a = audio();
+    if (!a?.src || state.mode !== "audio") {
+      playTrackOnline(currentTrack());
       return;
     }
-    if (state.mode === "embed") {
-      if (!state.yt || !state.ytReady) {
-        playEmbed(currentTrack().id);
-        return;
-      }
-      const st = state.yt.getPlayerState();
-      if (st === YT.PlayerState.PLAYING) state.yt.pauseVideo();
-      else state.yt.playVideo();
-      return;
-    }
-    playTrackOnline(currentTrack());
+    if (a.paused) a.play().catch(() => playTrackOnline(currentTrack()));
+    else a.pause();
   }
 
   function nextTrack() {
@@ -840,18 +898,11 @@
 
   function prevTrack() {
     if (!state.queue.length) return;
-    try {
-      if (state.mode === "audio") {
-        const a = audio();
-        if (a && a.currentTime > 3) {
-          a.currentTime = 0;
-          return;
-        }
-      } else if (state.yt && state.yt.getCurrentTime() > 3) {
-        state.yt.seekTo(0, true);
-        return;
-      }
-    } catch (_) {}
+    const a = audio();
+    if (a && a.currentTime > 3) {
+      a.currentTime = 0;
+      return;
+    }
     if (state.shuffle && state.shuffleOrder.length) {
       const pos = state.shuffleOrder.indexOf(state.index);
       if (pos <= 0) return toast("Đầu queue");
@@ -888,14 +939,17 @@
     if (!q) return;
     $("#search-input").value = q;
     setView(fromGenre ? "home" : "search");
-    if ($("#list-title")) $("#list-title").textContent = fromGenre ? "Chủ đề" : "Kết quả";
+    if ($("#list-title")) $("#list-title").textContent = fromGenre ? "Mood" : "Kết quả";
     if ($("#list-sub")) $("#list-sub").textContent = `“${q}”`;
-    setLoading(true, "Đang tìm…");
+    const cached = searchMem.get(q.toLowerCase().trim());
+    if (!(cached && cached.exp > Date.now())) setLoading(true, "Đang tìm…");
     $$(".genre-card").forEach((b) => b.classList.toggle("active", b.dataset.q === q));
     try {
       state.results = await searchTracks(q);
       if ($("#list-sub")) $("#list-sub").textContent = `${state.results.length} bài · “${q}”`;
       renderResults();
+      // warm first result stream
+      if (state.results[0]) prefetchStream(state.results[0].id);
       if (!state.results.length) toast("Không tìm thấy");
     } catch (err) {
       toast(err.message || "Search lỗi");
@@ -905,21 +959,10 @@
   }
 
   function tickProgress() {
-    let cur = 0;
-    let dur = 0;
-    try {
-      if (state.mode === "audio") {
-        const a = audio();
-        if (!a) return;
-        cur = a.currentTime || 0;
-        dur = a.duration || 0;
-      } else if (state.mode === "embed" && state.yt && state.ytReady) {
-        cur = state.yt.getCurrentTime() || 0;
-        dur = state.yt.getDuration() || 0;
-      } else return;
-    } catch (_) {
-      return;
-    }
+    const a = audio();
+    if (!a || state.mode !== "audio") return;
+    const cur = a.currentTime || 0;
+    const dur = a.duration || 0;
     if (!(dur > 0) || !Number.isFinite(dur)) return;
     state.duration = dur;
     const v = Math.floor((cur / dur) * 1000);
@@ -942,7 +985,7 @@
     } catch (_) {}
   }
 
-  // HTML5 audio events (background-friendly on iOS)
+  // Audio element events
   (() => {
     const a = audio();
     if (!a) return;
@@ -953,83 +996,34 @@
       renderNow();
     });
     a.addEventListener("pause", () => {
-      if (state.mode === "audio") {
-        state.isPlaying = false;
-        updateMediaSession(currentTrack());
-        renderNow();
-      }
+      state.isPlaying = false;
+      updateMediaSession(currentTrack());
+      renderNow();
     });
     a.addEventListener("timeupdate", tickProgress);
     a.addEventListener("error", () => {
       if (state.mode !== "audio") return;
       const t = currentTrack();
-      if (t) {
-        toast("Stream lỗi — thử Embed");
-        playEmbed(t.id);
-      }
+      if (!t) return;
+      streamMem.delete(t.id);
+      saveStreamCacheDisk();
+      toast("Stream hỏng — next");
+      setTimeout(() => nextTrack(), 500);
+    });
+    // Can play through faster feedback
+    a.addEventListener("canplay", () => {
+      if (state.mode === "audio" && state.isPlaying) setStatus("▶ Streaming");
     });
   })();
 
-  // Keep audio alive when app backgrounds (helps some iOS builds)
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) return;
-    if (state.mode === "audio" && state.isPlaying) {
-      const a = audio();
-      a?.play?.().catch(() => {});
-    }
+    if (state.mode === "audio" && state.isPlaying) audio()?.play?.().catch(() => {});
   });
-
-  // YouTube IFrame fallback
-  window.onYouTubeIframeAPIReady = function () {
-    state.yt = new YT.Player("yt-host", {
-      height: "100%",
-      width: "100%",
-      playerVars: {
-        autoplay: 0,
-        controls: 1,
-        rel: 0,
-        playsinline: 1,
-        modestbranding: 1,
-        fs: 1,
-        origin: location.origin,
-      },
-      events: {
-        onReady: (e) => {
-          state.ytReady = true;
-          e.target.setVolume(state.volume);
-          if (state.pendingId) {
-            playEmbed(state.pendingId);
-            state.pendingId = null;
-          }
-          setInterval(() => {
-            if (state.mode === "embed") tickProgress();
-          }, 400);
-        },
-        onStateChange: (e) => {
-          if (state.mode !== "embed") return;
-          if (e.data === YT.PlayerState.ENDED) nextTrack();
-          if (e.data === YT.PlayerState.PLAYING) {
-            state.isPlaying = true;
-            updateMediaSession(currentTrack());
-            renderNow();
-          }
-          if (e.data === YT.PlayerState.PAUSED) {
-            state.isPlaying = false;
-            updateMediaSession(currentTrack());
-            renderNow();
-          }
-        },
-        onError: () => {
-          toast("Không phát được — next");
-          setTimeout(() => nextTrack(), 600);
-        },
-      },
-    });
-  };
 
   bindMediaSessionHandlers();
 
-  // UI wiring
+  // UI
   $$(".nav-btn, .tabbar .tab, [data-view].lib-tile, #btn-open-search").forEach((btn) => {
     btn.addEventListener("click", () => {
       if (btn.dataset.view) setView(btn.dataset.view);
@@ -1098,26 +1092,17 @@
 
   $("#seek")?.addEventListener("input", () => {
     if (!state.duration) return;
-    const t = (Number($("#seek").value) / 1000) * state.duration;
-    if (state.mode === "audio") {
-      const a = audio();
-      if (a) a.currentTime = t;
-    } else if (state.yt) state.yt.seekTo(t, true);
+    const a = audio();
+    if (a) a.currentTime = (Number($("#seek").value) / 1000) * state.duration;
   });
   $(".d-seek")?.addEventListener("input", () => {
     if (!state.duration) return;
-    const t = (Number($(".d-seek").value) / 1000) * state.duration;
-    if (state.mode === "audio") {
-      const a = audio();
-      if (a) a.currentTime = t;
-    } else if (state.yt) state.yt.seekTo(t, true);
+    const a = audio();
+    if (a) a.currentTime = (Number($(".d-seek").value) / 1000) * state.duration;
   });
 
   function onVol(el) {
     state.volume = Number(el.value);
-    try {
-      state.yt?.setVolume(state.volume);
-    } catch (_) {}
     const a = audio();
     if (a) a.volume = state.volume / 100;
     ["#volume", "#volume-mobile"].forEach((sel) => {
@@ -1141,13 +1126,6 @@
     toast("Đã xóa queue");
   });
 
-  $("#btn-bg-help")?.addEventListener("click", () => {
-    $("#bg-sheet")?.classList.remove("hidden");
-  });
-  $("#btn-bg-close")?.addEventListener("click", () => {
-    $("#bg-sheet")?.classList.add("hidden");
-  });
-
   $("#btn-resume-session")?.addEventListener("click", () => {
     if (!state.queue.length) return toast("Chưa có session");
     playAtIndex(Math.max(0, Math.min(state.index, state.queue.length - 1)));
@@ -1162,6 +1140,8 @@
   $("#btn-ios-close")?.addEventListener("click", () => $("#ios-sheet")?.classList.add("hidden"));
   $("#btn-settings")?.addEventListener("click", () => $("#settings-sheet")?.classList.remove("hidden"));
   $("#btn-settings-close")?.addEventListener("click", () => $("#settings-sheet")?.classList.add("hidden"));
+  $("#btn-bg-help")?.addEventListener("click", () => $("#bg-sheet")?.classList.remove("hidden"));
+  $("#btn-bg-close")?.addEventListener("click", () => $("#bg-sheet")?.classList.add("hidden"));
 
   $("#pl-create")?.addEventListener("submit", (e) => {
     e.preventDefault();
@@ -1180,29 +1160,25 @@
     const sheet = $("#np-sheet");
     if (!sheet) return;
     let startY = 0;
-    sheet.addEventListener("touchstart", (e) => {
-      startY = e.touches[0].clientY;
-    }, { passive: true });
-    sheet.addEventListener("touchend", (e) => {
-      if (e.changedTouches[0].clientY - startY > 80) closeNowPlaying();
-    }, { passive: true });
+    sheet.addEventListener(
+      "touchstart",
+      (e) => {
+        startY = e.touches[0].clientY;
+      },
+      { passive: true }
+    );
+    sheet.addEventListener(
+      "touchend",
+      (e) => {
+        if (e.changedTouches[0].clientY - startY > 80) closeNowPlaying();
+      },
+      { passive: true }
+    );
   })();
 
   if ("serviceWorker" in navigator) {
-    const sw = new URL("./sw.js", location.href);
-    navigator.serviceWorker.register(sw.href).catch(() => {});
+    navigator.serviceWorker.register(new URL("./sw.js", location.href).href).catch(() => {});
   }
-
-  try {
-    const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent);
-    const standalone =
-      window.navigator.standalone === true ||
-      window.matchMedia("(display-mode: standalone)").matches;
-    if (isIos && !standalone && !localStorage.getItem("ytm_ios_tip2")) {
-      localStorage.setItem("ytm_ios_tip2", "1");
-      setTimeout(openIosHelp, 800);
-    }
-  } catch (_) {}
 
   function greeting() {
     const h = new Date().getHours();
@@ -1211,6 +1187,7 @@
     return "Chào buổi tối";
   }
 
+  loadStreamCacheDisk();
   load();
   ["#volume", "#volume-mobile"].forEach((sel) => {
     const el = $(sel);
@@ -1219,6 +1196,11 @@
   if ($("#greeting")) $("#greeting").textContent = greeting();
   if (state.queue.length && state.index < 0) state.index = 0;
   if (state.shuffle) rebuildShuffle();
+  // hide embed host if present
+  const host = $("#yt-host");
+  if (host) host.style.display = "none";
   renderAll();
-  if (!state.results.length) doSearch("lofi hip hop", { fromGenre: true });
+  // prefetch current queue head
+  if (state.queue[0]) prefetchStream(state.queue[Math.max(0, state.index)].id);
+  doSearch("lofi hip hop", { fromGenre: true });
 })();

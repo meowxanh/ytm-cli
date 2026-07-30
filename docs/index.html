@@ -229,7 +229,6 @@
 
       <div class="np-art-wrap">
         <div id="np-art" class="np-art empty"></div>
-        <div id="yt-host" class="yt-host-np" aria-hidden="true"></div>
       </div>
 
       <div class="np-info">
@@ -308,14 +307,13 @@
       <div class="sheet-handle"></div>
       <h2>Nghe nền (iPhone)</h2>
       <p class="muted sm" style="margin-bottom:12px;line-height:1.5">
-        Web Safari bị iOS hạn chế — thoát app có thể tắt nhạc.
-        Dùng chế độ <strong>Audio</strong> khi phát; nếu hiện Embed thì nền kém hơn.
+        App chỉ dùng <strong>HTML5 audio stream</strong> (không embed).
+        iOS vẫn có thể tắt web khi thoát app — hạn chế của Safari.
       </p>
       <button type="button" class="btn-block primary" id="btn-bg-close">Đã hiểu</button>
     </div>
   </div>
 
-  <script src="https://www.youtube.com/iframe_api"></script>
   <script src="./app.js"></script>
 </body>
 </html>
