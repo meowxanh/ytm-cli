@@ -1,81 +1,63 @@
-# YTM — YouTube Music CLI
+# YTM — App nghe nhạc (không cần PC server)
 
-Trình phát nhạc YouTube trong terminal: search, queue, library, favorites, playlists, lyrics, like/dislike, resume session.
+App nghe nhạc YouTube chạy **100% trên trình duyệt / iPhone**.  
+Không bật máy Windows. Host free trên **GitHub Pages**.
 
-## Yêu cầu
+## Dùng ngay (sau khi bật Pages)
 
-- Python 3.11+
-- (Tuỳ chọn) [mpv](https://mpv.io/) — phát stream trực tiếp, không cần cache
+**https://meowxanh.github.io/ytm-cli/**
 
-Không có mpv: app tải audio → convert mp3 (ffmpeg bundled qua `imageio-ffmpeg`) → phát bằng **pygame**. Cache tại `%USERPROFILE%\.ytm\cache`.
+### Cài như app trên iPhone
 
-## Cài đặt
+1. Mở link trên bằng **Safari**
+2. **Chia sẻ** → **Thêm vào Màn hình chính**
+3. Dùng icon **YTM** như app
 
-```powershell
-cd C:\Users\Duy\ytm-cli
-python3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
+## Cách hoạt động
 
-## Chạy
+| | |
+|--|--|
+| Giao diện | HTML/CSS/JS (static) |
+| Search | API public (Invidious / Piped) |
+| Phát nhạc | YouTube IFrame (trên điện thoại) |
+| Queue / fav / playlist | `localStorage` trên máy |
+| Server PC | **Không cần** |
 
-### Web UI (HTML) — recommend
+> Một số video chặn embed → app tự next. Không tải file audio về máy.
 
-```powershell
-cd C:\Users\Duy\ytm-cli
-.\run-web.ps1
-```
+## Bật GitHub Pages (1 lần)
 
-Mở trình duyệt: **http://127.0.0.1:5050**
+1. Repo: https://github.com/meowxanh/ytm-cli  
+2. **Settings → Pages**  
+3. Source: **Deploy from a branch**  
+4. Branch: `main` · Folder: `/docs`  
+5. Save → đợi 1–2 phút → mở `https://meowxanh.github.io/ytm-cli/`
 
-Giao diện dark music player: search, queue, favorites, history, playlist, lyrics.  
-Phát nhạc bằng **audio local** (yt-dlp tải + cache mp3) — tránh lỗi *Video unavailable* của YouTube embed.  
-Lần phát đầu mỗi bài có thể mất 10–40s; lần sau phát ngay từ cache.  
-Data dùng chung CLI: `%USERPROFILE%\.ytm\state.json`.
+## Dev local (tuỳ chọn, không bắt buộc)
 
-### CLI (terminal)
-
-```powershell
-cd C:\Users\Duy\ytm-cli
-.\run.ps1
-```
-
-Hoặc:
+Chỉ để xem UI trên PC:
 
 ```powershell
-.\.venv\Scripts\python.exe -m ytm
+cd C:\Users\Duy\ytm-cli\docs
+python3.12 -m http.server 8080
 ```
 
-## Lệnh chính
+Mở http://127.0.0.1:8080
 
-| Lệnh | Mô tả |
-|------|--------|
-| `search lo-fi chill` | Tìm 10 bài |
-| `play 1` | Phát bài #1 trong kết quả |
-| `play <url>` | Phát link YouTube |
-| `add 2` | Thêm #2 vào queue |
-| `queue` / `next` / `prev` | Xem queue, next, prev |
-| `shuffle on` | Bật shuffle |
-| `fav` / `favs` | Favorite bài hiện tại / list |
-| `like` / `dislike` | Like / dislike (+ skip) |
-| `pl create gym` | Tạo playlist |
-| `pl add gym` | Thêm bài đang phát vào playlist |
-| `pl play gym` | Phát playlist |
-| `lyrics` | Lời bài (caption YT / LRCLIB) |
-| `resume-session` | Khôi phục queue lần trước |
-| `help` | Trợ giúp |
-| `quit` | Thoát (tự save) |
+## Thư mục
 
-## Dữ liệu local
-
-Tất cả lưu tại `%USERPROFILE%\.ytm\`:
-
-- `state.json` — history, likes, favorites, playlists, session
-- `cache\` — file audio đã tải (backend pygame)
+```
+docs/          ← app static (GitHub Pages)
+  index.html
+  app.css
+  app.js
+  manifest.webmanifest
+  icons/
+ytm/           ← bản Python cũ (CLI/local server) — không bắt buộc
+```
 
 ## Ghi chú
 
-- Chỉ dùng cho mục đích cá nhân / nghe nhạc. Tôn trọng ToS YouTube.
-- Lần phát đầu mỗi bài (pygame) có thể mất vài chục giây để tải audio.
-- `pause` / `resume` chỉ chắc chắn khi dùng backend pygame.
+- Dùng cá nhân. Tôn trọng ToS YouTube.  
+- Search phụ thuộc instance public (đôi khi chậm / fail → thử lại).  
+- Muốn offline / tải file audio: bản Python local (`ytm/`) vẫn còn trong repo.

@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+  <title>YTM</title>
+  <meta name="description" content="Nghe nhạc YouTube trên iPhone" />
+  <meta name="theme-color" content="#000000" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="YTM" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" type="image/png" href="./icons/favicon.png" />
+  <link rel="apple-touch-icon" href="./icons/icon-180.png" />
+  <link rel="stylesheet" href="./app.css" />
+</head>
+<body>
+  <div class="app" id="app">
+    <!-- ===== Desktop sidebar (ẩn trên iPhone) ===== -->
+    <aside class="sidebar desktop-only">
+      <div class="brand">
+        <span class="brand-mark">▶</span>
+        <div><strong>YTM</strong><small>Music</small></div>
+      </div>
+      <nav class="nav">
+        <button class="nav-btn active" data-view="home">Trang chủ</button>
+        <button class="nav-btn" data-view="search">Tìm kiếm</button>
+        <button class="nav-btn" data-view="queue">Hàng đợi</button>
+        <button class="nav-btn" data-view="favorites">Yêu thích</button>
+        <button class="nav-btn" data-view="playlists">Playlist</button>
+        <button class="nav-btn" data-view="history">Lịch sử</button>
+        <button class="nav-btn" data-view="library">Thư viện</button>
+      </nav>
+      <div class="sidebar-foot">
+        <button type="button" class="btn-block ghost" id="btn-ios-help">Cài lên iPhone</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <!-- HOME -->
+      <section id="view-home" class="view active">
+        <header class="page-header">
+          <div>
+            <p class="eyebrow" id="greeting">Xin chào</p>
+            <h1 class="page-title">Nghe nhạc</h1>
+          </div>
+          <button type="button" class="avatar-btn" id="btn-settings" title="Cài đặt" aria-label="Cài đặt">⚙</button>
+        </header>
+
+        <button type="button" class="search-launch" id="btn-open-search" data-view="search">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="M20 20l-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <span>Bài hát, nghệ sĩ, link YouTube…</span>
+        </button>
+
+        <div class="resume-card" id="btn-resume-session" hidden>
+          <div class="resume-glow"></div>
+          <div class="resume-body">
+            <div class="resume-label">Tiếp tục nghe</div>
+            <div class="resume-title" id="resume-title">Session trước</div>
+          </div>
+          <span class="resume-play">▶</span>
+        </div>
+
+        <div class="block">
+          <div class="block-head">
+            <h2>Chủ đề</h2>
+          </div>
+          <div class="genre-scroll" id="genre-row">
+            <button type="button" class="genre-card g1" data-q="lofi hip hop"><span>Lo-fi</span></button>
+            <button type="button" class="genre-card g2" data-q="nhạc trẻ việt nam"><span>V-Pop</span></button>
+            <button type="button" class="genre-card g3" data-q="bolero hay nhất"><span>Bolero</span></button>
+            <button type="button" class="genre-card g4" data-q="us uk hits"><span>US-UK</span></button>
+            <button type="button" class="genre-card g5" data-q="kpop playlist"><span>K-Pop</span></button>
+            <button type="button" class="genre-card g6" data-q="edm party mix"><span>EDM</span></button>
+            <button type="button" class="genre-card g7" data-q="chill acoustic"><span>Acoustic</span></button>
+            <button type="button" class="genre-card g8" data-q="rap việt"><span>Rap Việt</span></button>
+            <button type="button" class="genre-card g9" data-q="jazz piano"><span>Jazz</span></button>
+            <button type="button" class="genre-card g10" data-q="workout gym music"><span>Gym</span></button>
+          </div>
+        </div>
+
+        <div class="block">
+          <div class="block-head">
+            <h2 id="list-title">Khám phá</h2>
+            <p class="muted sm" id="list-sub">Chọn chủ đề hoặc tìm kiếm</p>
+          </div>
+          <div id="track-grid" class="track-list ios-list"></div>
+        </div>
+      </section>
+
+      <!-- SEARCH -->
+      <section id="view-search" class="view">
+        <header class="page-header">
+          <h1 class="page-title">Tìm kiếm</h1>
+        </header>
+        <form id="search-form" class="search-box ios" autocomplete="off">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="M20 20l-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <input id="search-input" type="search" enterkeyhint="search" placeholder="Bài hát, nghệ sĩ, link…" />
+          <button type="submit" class="search-go">Tìm</button>
+        </form>
+        <div id="search-results" class="track-list ios-list"></div>
+      </section>
+
+      <!-- QUEUE -->
+      <section id="view-queue" class="view">
+        <header class="page-header row-between">
+          <div>
+            <h1 class="page-title">Hàng đợi</h1>
+            <p class="muted sm" id="queue-meta">0 bài</p>
+          </div>
+          <div class="row gap">
+            <button class="pill" id="btn-shuffle" type="button">Shuffle</button>
+            <button class="pill danger" id="btn-clear-queue" type="button">Xóa</button>
+          </div>
+        </header>
+        <div id="queue-list" class="track-list ios-list"></div>
+      </section>
+
+      <!-- FAVORITES -->
+      <section id="view-favorites" class="view">
+        <header class="page-header">
+          <h1 class="page-title">Yêu thích</h1>
+        </header>
+        <div id="fav-list" class="track-list ios-list"></div>
+      </section>
+
+      <!-- HISTORY -->
+      <section id="view-history" class="view">
+        <header class="page-header">
+          <h1 class="page-title">Lịch sử</h1>
+        </header>
+        <div id="history-list" class="track-list ios-list"></div>
+      </section>
+
+      <!-- PLAYLISTS -->
+      <section id="view-playlists" class="view">
+        <header class="page-header">
+          <h1 class="page-title">Playlist</h1>
+        </header>
+        <form id="pl-create" class="inline-form ios">
+          <input id="pl-name" placeholder="Tên playlist mới" />
+          <button type="submit">Tạo</button>
+        </form>
+        <div id="playlist-panel" class="playlist-panel"></div>
+      </section>
+
+      <!-- LIBRARY / LYRICS hub -->
+      <section id="view-library" class="view">
+        <header class="page-header">
+          <h1 class="page-title">Thư viện</h1>
+        </header>
+        <div class="lib-grid">
+          <button type="button" class="lib-tile" data-view="favorites">
+            <span class="lib-ico">♥</span>
+            <span>Yêu thích</span>
+          </button>
+          <button type="button" class="lib-tile" data-view="history">
+            <span class="lib-ico">⏱</span>
+            <span>Lịch sử</span>
+          </button>
+          <button type="button" class="lib-tile" data-view="playlists">
+            <span class="lib-ico">▤</span>
+            <span>Playlist</span>
+          </button>
+          <button type="button" class="lib-tile" id="btn-lyrics-lib">
+            <span class="lib-ico">♫</span>
+            <span>Lyrics</span>
+          </button>
+        </div>
+        <div class="block" style="margin-top:20px">
+          <div class="block-head"><h2>Lyrics</h2><p class="muted sm" id="lyrics-meta">—</p></div>
+          <pre id="lyrics-body" class="lyrics-body">Chọn bài đang phát rồi mở Lyrics.</pre>
+        </div>
+      </section>
+    </main>
+
+    <!-- MINI PLAYER (iOS style) -->
+    <div class="mini-player" id="mini-player" hidden>
+      <button type="button" class="mini-hit" id="btn-expand-player" aria-label="Mở now playing">
+        <div id="now-thumb" class="mini-art empty"></div>
+        <div class="mini-meta">
+          <div id="now-title" class="mini-title">Chưa phát</div>
+          <div id="now-artist" class="mini-artist">Chạm để mở</div>
+        </div>
+      </button>
+      <button type="button" class="mini-ctrl" id="btn-play" aria-label="Play">▶</button>
+      <button type="button" class="mini-ctrl" id="btn-next" aria-label="Next">⏭</button>
+    </div>
+
+    <!-- Desktop player bar -->
+    <footer class="player desktop-player desktop-only">
+      <div class="player-left">
+        <div class="now-thumb empty d-thumb"></div>
+        <div class="now-meta">
+          <div class="now-title d-title">Chưa phát</div>
+          <div class="now-artist muted d-artist">—</div>
+        </div>
+        <button class="icon-btn" id="btn-fav" type="button">♡</button>
+        <button class="icon-btn" id="btn-like" type="button">👍</button>
+        <button class="icon-btn" id="btn-dislike" type="button">👎</button>
+        <button class="icon-btn" id="btn-lyrics" type="button">♫</button>
+      </div>
+      <div class="player-center">
+        <div class="controls">
+          <button class="icon-btn" id="btn-prev" type="button">⏮</button>
+          <button class="play-btn d-play" type="button">▶</button>
+          <button class="icon-btn d-next" type="button">⏭</button>
+        </div>
+        <div class="progress-row">
+          <span class="d-cur">0:00</span>
+          <input class="d-seek" type="range" min="0" max="1000" value="0" />
+          <span class="d-dur">0:00</span>
+        </div>
+      </div>
+      <div class="player-right">
+        <label class="vol-wrap">
+          <span>🔊</span>
+          <input id="volume" type="range" min="0" max="100" value="70" />
+        </label>
+        <div id="play-status" class="play-status"></div>
+      </div>
+    </footer>
+  </div>
+
+  <!-- iOS TAB BAR -->
+  <nav class="tabbar" aria-label="Menu chính">
+    <button type="button" class="tab active" data-view="home">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M12 3.2 3 11h2v9h5v-6h4v6h5v-9h2L12 3.2z"/></svg>
+      <span>Home</span>
+    </button>
+    <button type="button" class="tab" data-view="search">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.5 6.5 0 1 0 14 15.5l.27.28v.79l5 5 1.5-1.5-5-5zM9.5 14A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
+      <span>Search</span>
+    </button>
+    <button type="button" class="tab" data-view="queue">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h10v2H4v-2zm12 0 5 3-5 3v-6z"/></svg>
+      <span>Queue</span>
+    </button>
+    <button type="button" class="tab" data-view="library">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M4 6h2v12H4V6zm4 0h2v12H8V6zm4 0h2l6 12h-2.4l-1.2-2.4H11l-1.2 2.4H7.4L13 6zm1.8 7.2h3.4L14.5 8.5l-1.7 4.7z"/></svg>
+      <span>Library</span>
+    </button>
+  </nav>
+
+  <!-- FULL NOW PLAYING (iPhone) -->
+  <div id="np-sheet" class="np-sheet" hidden>
+    <div class="np-bg" id="np-bg"></div>
+    <div class="np-scrim"></div>
+    <div class="np-content">
+      <div class="np-top">
+        <button type="button" class="np-chevron" id="btn-collapse-player" aria-label="Đóng">⌄</button>
+        <div class="np-top-label">Đang phát</div>
+        <button type="button" class="np-more" id="btn-np-queue" aria-label="Queue">☰</button>
+      </div>
+
+      <div class="np-art-wrap">
+        <div id="np-art" class="np-art empty"></div>
+      </div>
+
+      <div class="np-info">
+        <div>
+          <div id="np-title" class="np-title">—</div>
+          <div id="np-artist" class="np-artist">—</div>
+        </div>
+        <button type="button" class="np-heart" id="btn-np-fav">♡</button>
+      </div>
+
+      <div class="np-progress">
+        <input id="seek" type="range" min="0" max="1000" value="0" />
+        <div class="np-times">
+          <span id="time-cur">0:00</span>
+          <span id="time-dur">0:00</span>
+        </div>
+      </div>
+
+      <div class="np-controls">
+        <button type="button" class="np-side" id="btn-np-shuffle">⇄</button>
+        <button type="button" class="np-skip" id="btn-np-prev">⏮</button>
+        <button type="button" class="np-play" id="btn-np-play">▶</button>
+        <button type="button" class="np-skip" id="btn-np-next">⏭</button>
+        <button type="button" class="np-side" id="btn-np-lyrics">♫</button>
+      </div>
+
+      <div class="np-extra">
+        <button type="button" class="np-chip" id="btn-np-like">👍 Like</button>
+        <button type="button" class="np-chip" id="btn-np-dislike">👎 Skip</button>
+      </div>
+      <p class="np-status" id="np-status"></p>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <div id="loading-overlay" class="loading-overlay hidden">
+    <div class="spinner"></div>
+    <p id="loading-text">Đang tải…</p>
+  </div>
+
+  <div id="ios-sheet" class="sheet hidden" role="dialog">
+    <div class="sheet-card">
+      <div class="sheet-handle"></div>
+      <h2>Cài YTM như app</h2>
+      <ol class="ios-steps">
+        <li>Mở bằng <strong>Safari</strong>.</li>
+        <li>Bấm <strong>Chia sẻ</strong> (□↑).</li>
+        <li><strong>Thêm vào Màn hình chính</strong>.</li>
+        <li>Bấm <strong>Thêm</strong> — <strong>không cần bật PC</strong>.</li>
+      </ol>
+      <p class="muted sm" id="ios-url-hint">App chạy trên internet (GitHub Pages).</p>
+      <p class="ios-url" id="ios-url"></p>
+      <button type="button" class="btn-block primary" id="btn-ios-close">Xong</button>
+    </div>
+  </div>
+
+  <div id="settings-sheet" class="sheet hidden">
+    <div class="sheet-card">
+      <div class="sheet-handle"></div>
+      <h2>Cài đặt</h2>
+      <label class="setting-row">
+        <span>Âm lượng</span>
+        <input id="volume-mobile" type="range" min="0" max="100" value="70" />
+      </label>
+      <button type="button" class="btn-block ghost" id="btn-ios-help-2">Cài lên màn hình chính</button>
+      <button type="button" class="btn-block primary" id="btn-settings-close">Đóng</button>
+    </div>
+  </div>
+
+  <!-- Hidden YouTube player (audio/video engine) -->
+  <div id="yt-host" class="yt-host" aria-hidden="true"></div>
+
+  <script src="https://www.youtube.com/iframe_api"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
