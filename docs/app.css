@@ -1,13 +1,39 @@
 /* YTM — iPhone-first music UI (static / no server) */
-.yt-host {
+#audio-el {
   position: fixed;
-  width: 1px;
-  height: 1px;
-  opacity: 0.01;
+  width: 0;
+  height: 0;
+  opacity: 0;
   pointer-events: none;
-  left: -9999px;
-  bottom: 0;
+}
+.yt-host-np {
+  display: none;
+  width: min(78vw, 340px);
+  aspect-ratio: 16/9;
+  border-radius: 12px;
   overflow: hidden;
+  background: #000;
+  box-shadow: 0 24px 60px rgba(0,0,0,.55);
+}
+.yt-host-np.show {
+  display: block;
+}
+.yt-host-np iframe {
+  width: 100% !important;
+  height: 100% !important;
+}
+.np-art-wrap.mode-embed #np-art {
+  display: none;
+}
+.np-art-wrap.mode-embed .yt-host-np {
+  display: block;
+}
+.np-bg-tip {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  color: rgba(255,255,255,.55);
+  text-align: center;
+  line-height: 1.4;
 }
 
 :root {

@@ -256,7 +256,15 @@
 
       <div class="np-art-wrap">
         <div id="np-art" class="np-art empty"></div>
+        <!-- Visible YT fallback / PiP-friendly host -->
+        <div id="yt-host" class="yt-host-np" aria-hidden="true"></div>
       </div>
+      <p class="np-bg-tip" id="bg-tip">
+        iPhone: dùng chế độ <strong>Audio</strong> để nghe khi thoát app. Nếu vẫn tắt → bấm nút bên dưới.
+      </p>
+      <button type="button" class="np-chip" id="btn-bg-help" style="align-self:center;margin-bottom:10px">
+        📵 Thoát app bị tắt? Xem cách giữ nhạc
+      </button>
 
       <div class="np-info">
         <div>
@@ -325,8 +333,24 @@
     </div>
   </div>
 
-  <!-- Hidden YouTube player (audio/video engine) -->
-  <div id="yt-host" class="yt-host" aria-hidden="true"></div>
+  <!-- HTML5 audio: stream online, better background on iOS than YT iframe -->
+  <audio id="audio-el" playsinline webkit-playsinline preload="auto"></audio>
+
+  <div id="bg-sheet" class="sheet hidden">
+    <div class="sheet-card">
+      <div class="sheet-handle"></div>
+      <h2>Nghe khi thoát app (iPhone)</h2>
+      <ol class="ios-steps">
+        <li>Cài app lên MH chính (Safari → Chia sẻ → Thêm vào MH chính).</li>
+        <li>Mở từ <strong>icon YTM</strong> (không mở tab Safari thường).</li>
+        <li>Bấm Phát — status hiện <strong>Audio</strong> (không phải Embed).</li>
+        <li>Khóa màn hình / sang app khác — Control Center có thể hiện nút nhạc.</li>
+        <li>Nếu bài đó không stream được (fallback Embed) → iOS <strong>sẽ tắt</strong> khi thoát. Thử bài khác.</li>
+      </ol>
+      <p class="muted sm">Vẫn là nghe <strong>online</strong>, không tải file. iOS hạn chế web mạnh hơn Spotify.</p>
+      <button type="button" class="btn-block primary" id="btn-bg-close">Đã hiểu</button>
+    </div>
+  </div>
 
   <script src="https://www.youtube.com/iframe_api"></script>
   <script src="./app.js"></script>

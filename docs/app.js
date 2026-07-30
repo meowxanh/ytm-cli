@@ -1,4 +1,4 @@
-/* YTM Static — no PC server. Search via public APIs, play via YouTube IFrame, state in localStorage */
+/* YTM Static — stream online (HTML5 audio first for iOS background), no PC, no file download */
 (() => {
   const STORAGE_KEY = "ytm_static_v1";
 
@@ -8,11 +8,22 @@
     "https://yewtu.be",
     "https://invidious.flokinet.to",
     "https://vid.puffyan.us",
+    "https://invidious.privacyredirect.com",
+    "https://iv.ggtyler.dev",
   ];
   const PIPED = [
     "https://pipedapi.kavin.rocks",
+    "https://api.piped.private.coffee",
+    "https://pipedapi.reallyaweso.me",
+    "https://pipedapi.leptons.xyz",
     "https://pipedapi.adminforge.de",
     "https://pipedapi.nosebs.ru",
+    "https://pipedapi.r4fo.com",
+    "https://pipedapi.syncpundit.io",
+  ];
+  const COBALT = [
+    "https://api.cobalt.tools/",
+    "https://cobalt-api.kwiatekmiki.com/",
   ];
 
   const state = {
@@ -33,7 +44,11 @@
     yt: null,
     ytReady: false,
     pendingId: null,
+    mode: "none", // "audio" | "embed"
+    loadToken: 0,
   };
+
+  const audio = () => document.getElementById("audio-el");
 
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => [...document.querySelectorAll(s)];
@@ -513,11 +528,11 @@
       } else resume.hidden = true;
     }
 
-    if (state.yt && state.ytReady) {
-      try {
-        state.yt.setVolume(state.volume);
-      } catch (_) {}
-    }
+    try {
+      if (state.mode === "embed" && state.yt && state.ytReady) state.yt.setVolume(state.volume);
+      const a = audio();
+      if (a) a.volume = state.volume / 100;
+    } catch (_) {}
   }
 
   function renderAll() {
@@ -568,6 +583,113 @@
     save();
   }
 
+  function setEmbedVisible(show) {
+    const wrap = $(".np-art-wrap");
+    const host = $("#yt-host");
+    if (wrap) wrap.classList.toggle("mode-embed", !!show);
+    if (host) host.classList.toggle("show", !!show);
+  }
+
+  function stopAll() {
+    const a = audio();
+    if (a) {
+      try {
+        a.pause();
+        a.removeAttribute("src");
+        a.load();
+      } catch (_) {}
+    }
+    try {
+      state.yt?.stopVideo?.();
+    } catch (_) {}
+  }
+
+  function updateMediaSession(track) {
+    if (!("mediaSession" in navigator) || !track) return;
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: track.title || "YTM",
+        artist: track.uploader || "YouTube",
+        album: "YTM",
+        artwork: [
+          { src: thumb(track), sizes: "512x512", type: "image/jpeg" },
+        ],
+      });
+      navigator.mediaSession.playbackState = state.isPlaying ? "playing" : "paused";
+    } catch (_) {}
+  }
+
+  function bindMediaSessionHandlers() {
+    if (!("mediaSession" in navigator)) return;
+    try {
+      navigator.mediaSession.setActionHandler("play", () => togglePlay());
+      navigator.mediaSession.setActionHandler("pause", () => togglePlay());
+      navigator.mediaSession.setActionHandler("previoustrack", () => prevTrack());
+      navigator.mediaSession.setActionHandler("nexttrack", () => nextTrack());
+      navigator.mediaSession.setActionHandler("seekto", (d) => {
+        if (d.seekTime == null) return;
+        if (state.mode === "audio") {
+          const a = audio();
+          if (a) a.currentTime = d.seekTime;
+        } else if (state.yt) {
+          state.yt.seekTo(d.seekTime, true);
+        }
+      });
+    } catch (_) {}
+  }
+
+  async function resolveAudioUrl(videoId) {
+    // 1) Cobalt API
+    for (const base of COBALT) {
+      try {
+        const res = await fetch(base, {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            url: `https://www.youtube.com/watch?v=${videoId}`,
+            downloadMode: "audio",
+            audioFormat: "best",
+          }),
+        });
+        if (!res.ok) continue;
+        const data = await res.json();
+        const u = data.url || data.tunnel || data.audio;
+        if (u && typeof u === "string" && u.startsWith("http")) return u;
+      } catch (_) {}
+    }
+
+    // 2) Piped streams
+    for (const base of PIPED) {
+      try {
+        const data = await fetchJson(`${base}/streams/${videoId}`, 10000);
+        const list = (data.audioStreams || []).slice();
+        list.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+        // Prefer m4a/mp4 for iOS
+        const prefer =
+          list.find((s) => /mp4|m4a|aac/i.test(s.mimeType || s.format || "")) || list[0];
+        if (prefer?.url) return prefer.url;
+      } catch (_) {}
+    }
+
+    // 3) Invidious adaptive audio
+    for (const base of INVIDIOUS) {
+      try {
+        const data = await fetchJson(`${base}/api/v1/videos/${videoId}`, 10000);
+        const formats = data.adaptiveFormats || [];
+        const aud = formats
+          .filter((f) => String(f.type || f.mimeType || "").includes("audio"))
+          .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+        const prefer =
+          aud.find((f) => /mp4|m4a|aac/i.test(String(f.type || ""))) || aud[0];
+        if (prefer?.url) return prefer.url;
+      } catch (_) {}
+    }
+    return null;
+  }
+
   function playAtIndex(i) {
     if (i < 0 || i >= state.queue.length) return;
     state.index = i;
@@ -576,11 +698,80 @@
     save();
     renderNow();
     renderQueue();
-    loadVideo(track.id);
-    setStatus("");
+    playTrackOnline(track);
   }
 
-  function loadVideo(videoId) {
+  async function playTrackOnline(track) {
+    const token = ++state.loadToken;
+    stopAll();
+    state.isPlaying = false;
+    state.mode = "none";
+    setEmbedVisible(false);
+    setStatus("Đang lấy stream audio…");
+    setLoading(true, "Chuẩn bị nghe online…");
+    renderNow();
+
+    let streamUrl = null;
+    try {
+      streamUrl = await resolveAudioUrl(track.id);
+    } catch (_) {}
+
+    if (token !== state.loadToken) return;
+
+    if (streamUrl) {
+      try {
+        await playHtml5(streamUrl, track, token);
+        setLoading(false);
+        return;
+      } catch (e) {
+        console.warn("html5 audio failed", e);
+      }
+    }
+
+    // Fallback embed (background thường không được trên iOS)
+    setLoading(false);
+    setStatus("Embed (thoát app có thể tắt)");
+    toast("Stream audio lỗi — fallback Embed (nền kém hơn)");
+    playEmbed(track.id);
+  }
+
+  function playHtml5(url, track, token) {
+    return new Promise((resolve, reject) => {
+      const a = audio();
+      if (!a) return reject(new Error("no audio el"));
+      state.mode = "audio";
+      setEmbedVisible(false);
+      a.volume = state.volume / 100;
+      let settled = false;
+      const ok = () => {
+        if (settled || token !== state.loadToken) return;
+        settled = true;
+        state.isPlaying = true;
+        setStatus("Audio · nghe nền OK hơn");
+        updateMediaSession(track);
+        renderNow();
+        resolve();
+      };
+      const fail = (e) => {
+        if (settled) return;
+        settled = true;
+        reject(e || new Error("audio error"));
+      };
+      a.onerror = () => fail(new Error("audio error"));
+      a.src = url;
+      a.load();
+      a.play().then(ok).catch(fail);
+      // iOS sometimes fires playing without play() promise resolving cleanly
+      a.addEventListener("playing", ok, { once: true });
+      setTimeout(() => {
+        if (!settled && !a.paused && a.currentTime >= 0) ok();
+      }, 2000);
+    });
+  }
+
+  function playEmbed(videoId) {
+    state.mode = "embed";
+    setEmbedVisible(true);
     if (!state.ytReady || !state.yt) {
       state.pendingId = videoId;
       setStatus("Đang khởi tạo player…");
@@ -589,9 +780,11 @@
     try {
       state.yt.loadVideoById(videoId);
       state.yt.setVolume(state.volume);
+      state.yt.unMute?.();
       state.yt.playVideo();
       state.isPlaying = true;
-      setStatus("");
+      setStatus("Embed · thoát app dễ tắt");
+      updateMediaSession(currentTrack());
       renderNow();
     } catch (e) {
       toast("Không phát được video");
@@ -604,13 +797,27 @@
       if (state.queue.length) playAtIndex(Math.max(0, state.index));
       return;
     }
-    if (!state.yt || !state.ytReady) {
-      loadVideo(currentTrack().id);
+    if (state.mode === "audio") {
+      const a = audio();
+      if (!a?.src) {
+        playTrackOnline(currentTrack());
+        return;
+      }
+      if (a.paused) a.play().catch(() => playTrackOnline(currentTrack()));
+      else a.pause();
       return;
     }
-    const st = state.yt.getPlayerState();
-    if (st === YT.PlayerState.PLAYING) state.yt.pauseVideo();
-    else state.yt.playVideo();
+    if (state.mode === "embed") {
+      if (!state.yt || !state.ytReady) {
+        playEmbed(currentTrack().id);
+        return;
+      }
+      const st = state.yt.getPlayerState();
+      if (st === YT.PlayerState.PLAYING) state.yt.pauseVideo();
+      else state.yt.playVideo();
+      return;
+    }
+    playTrackOnline(currentTrack());
   }
 
   function nextTrack() {
@@ -634,7 +841,13 @@
   function prevTrack() {
     if (!state.queue.length) return;
     try {
-      if (state.yt && state.yt.getCurrentTime() > 3) {
+      if (state.mode === "audio") {
+        const a = audio();
+        if (a && a.currentTime > 3) {
+          a.currentTime = 0;
+          return;
+        }
+      } else if (state.yt && state.yt.getCurrentTime() > 3) {
         state.yt.seekTo(0, true);
         return;
       }
@@ -691,17 +904,91 @@
     }
   }
 
-  // YouTube IFrame
+  function tickProgress() {
+    let cur = 0;
+    let dur = 0;
+    try {
+      if (state.mode === "audio") {
+        const a = audio();
+        if (!a) return;
+        cur = a.currentTime || 0;
+        dur = a.duration || 0;
+      } else if (state.mode === "embed" && state.yt && state.ytReady) {
+        cur = state.yt.getCurrentTime() || 0;
+        dur = state.yt.getDuration() || 0;
+      } else return;
+    } catch (_) {
+      return;
+    }
+    if (!(dur > 0) || !Number.isFinite(dur)) return;
+    state.duration = dur;
+    const v = Math.floor((cur / dur) * 1000);
+    if ($("#time-cur")) $("#time-cur").textContent = fmt(cur);
+    if ($("#time-dur")) $("#time-dur").textContent = fmt(dur);
+    if ($("#seek")) $("#seek").value = v;
+    if ($(".d-cur")) $(".d-cur").textContent = fmt(cur);
+    if ($(".d-dur")) $(".d-dur").textContent = fmt(dur);
+    if ($(".d-seek")) $(".d-seek").value = v;
+    try {
+      if ("mediaSession" in navigator && navigator.mediaSession.setPositionState) {
+        navigator.mediaSession.setPositionState({
+          duration: dur,
+          position: Math.min(cur, dur),
+          playbackRate: 1,
+        });
+      }
+    } catch (_) {}
+  }
+
+  // HTML5 audio events (background-friendly on iOS)
+  (() => {
+    const a = audio();
+    if (!a) return;
+    a.addEventListener("ended", () => nextTrack());
+    a.addEventListener("play", () => {
+      state.isPlaying = true;
+      updateMediaSession(currentTrack());
+      renderNow();
+    });
+    a.addEventListener("pause", () => {
+      if (state.mode === "audio") {
+        state.isPlaying = false;
+        updateMediaSession(currentTrack());
+        renderNow();
+      }
+    });
+    a.addEventListener("timeupdate", tickProgress);
+    a.addEventListener("error", () => {
+      if (state.mode !== "audio") return;
+      const t = currentTrack();
+      if (t) {
+        toast("Stream lỗi — thử Embed");
+        playEmbed(t.id);
+      }
+    });
+  })();
+
+  // Keep audio alive when app backgrounds (helps some iOS builds)
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) return;
+    if (state.mode === "audio" && state.isPlaying) {
+      const a = audio();
+      a?.play?.().catch(() => {});
+    }
+  });
+
+  // YouTube IFrame fallback
   window.onYouTubeIframeAPIReady = function () {
     state.yt = new YT.Player("yt-host", {
-      height: "180",
-      width: "320",
+      height: "100%",
+      width: "100%",
       playerVars: {
         autoplay: 0,
-        controls: 0,
+        controls: 1,
         rel: 0,
         playsinline: 1,
         modestbranding: 1,
+        fs: 1,
         origin: location.origin,
       },
       events: {
@@ -709,53 +996,36 @@
           state.ytReady = true;
           e.target.setVolume(state.volume);
           if (state.pendingId) {
-            loadVideo(state.pendingId);
+            playEmbed(state.pendingId);
             state.pendingId = null;
           }
           setInterval(() => {
-            if (!state.yt || !state.ytReady) return;
-            try {
-              const cur = state.yt.getCurrentTime() || 0;
-              const dur = state.yt.getDuration() || 0;
-              if (dur > 0) {
-                state.duration = dur;
-                const v = Math.floor((cur / dur) * 1000);
-                if ($("#time-cur")) $("#time-cur").textContent = fmt(cur);
-                if ($("#time-dur")) $("#time-dur").textContent = fmt(dur);
-                if ($("#seek")) $("#seek").value = v;
-                if ($(".d-cur")) $(".d-cur").textContent = fmt(cur);
-                if ($(".d-dur")) $(".d-dur").textContent = fmt(dur);
-                if ($(".d-seek")) $(".d-seek").value = v;
-              }
-            } catch (_) {}
+            if (state.mode === "embed") tickProgress();
           }, 400);
         },
         onStateChange: (e) => {
+          if (state.mode !== "embed") return;
           if (e.data === YT.PlayerState.ENDED) nextTrack();
           if (e.data === YT.PlayerState.PLAYING) {
             state.isPlaying = true;
+            updateMediaSession(currentTrack());
             renderNow();
           }
           if (e.data === YT.PlayerState.PAUSED) {
             state.isPlaying = false;
+            updateMediaSession(currentTrack());
             renderNow();
           }
         },
-        onError: (e) => {
-          const code = e.data;
-          // 101/150 embed disabled, 100 not found, 150 same
-          toast(
-            code === 101 || code === 150
-              ? "Video chặn embed — thử bài khác"
-              : "Không phát được video này"
-          );
-          setStatus("Embed bị chặn");
-          // auto skip
-          setTimeout(() => nextTrack(), 800);
+        onError: () => {
+          toast("Không phát được — next");
+          setTimeout(() => nextTrack(), 600);
         },
       },
     });
   };
+
+  bindMediaSessionHandlers();
 
   // UI wiring
   $$(".nav-btn, .tabbar .tab, [data-view].lib-tile, #btn-open-search").forEach((btn) => {
@@ -825,12 +1095,20 @@
   });
 
   $("#seek")?.addEventListener("input", () => {
-    if (!state.duration || !state.yt) return;
-    state.yt.seekTo((Number($("#seek").value) / 1000) * state.duration, true);
+    if (!state.duration) return;
+    const t = (Number($("#seek").value) / 1000) * state.duration;
+    if (state.mode === "audio") {
+      const a = audio();
+      if (a) a.currentTime = t;
+    } else if (state.yt) state.yt.seekTo(t, true);
   });
   $(".d-seek")?.addEventListener("input", () => {
-    if (!state.duration || !state.yt) return;
-    state.yt.seekTo((Number($(".d-seek").value) / 1000) * state.duration, true);
+    if (!state.duration) return;
+    const t = (Number($(".d-seek").value) / 1000) * state.duration;
+    if (state.mode === "audio") {
+      const a = audio();
+      if (a) a.currentTime = t;
+    } else if (state.yt) state.yt.seekTo(t, true);
   });
 
   function onVol(el) {
@@ -838,6 +1116,8 @@
     try {
       state.yt?.setVolume(state.volume);
     } catch (_) {}
+    const a = audio();
+    if (a) a.volume = state.volume / 100;
     ["#volume", "#volume-mobile"].forEach((sel) => {
       const o = $(sel);
       if (o && o !== el) o.value = state.volume;
@@ -851,13 +1131,19 @@
     state.queue = [];
     state.index = -1;
     state.shuffleOrder = [];
-    try {
-      state.yt?.stopVideo();
-    } catch (_) {}
+    stopAll();
     state.isPlaying = false;
+    state.mode = "none";
     save();
     renderAll();
     toast("Đã xóa queue");
+  });
+
+  $("#btn-bg-help")?.addEventListener("click", () => {
+    $("#bg-sheet")?.classList.remove("hidden");
+  });
+  $("#btn-bg-close")?.addEventListener("click", () => {
+    $("#bg-sheet")?.classList.add("hidden");
   });
 
   $("#btn-resume-session")?.addEventListener("click", () => {
