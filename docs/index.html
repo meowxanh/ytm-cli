@@ -292,11 +292,30 @@
       <div class="sheet-handle"></div>
       <h2>Cài đặt</h2>
       <label class="setting-row">
+        <span>Stream API (cloud, không cần PC)</span>
+        <input id="stream-api-input" type="url" placeholder="https://ytm-stream-xxxx.onrender.com" style="padding:12px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);outline:none;width:100%" />
+      </label>
+      <p class="muted sm" id="stream-api-hint" style="margin:0 0 8px;line-height:1.45">
+        API public hay chết. Deploy free 1 lần trên Render (xem README) rồi dán URL vào đây.
+      </p>
+      <button type="button" class="btn-block primary" id="btn-save-api">Lưu API</button>
+      <label class="setting-row">
         <span>Âm lượng</span>
         <input id="volume-mobile" type="range" min="0" max="100" value="70" />
       </label>
       <button type="button" class="btn-block ghost" id="btn-ios-help-2">Cài lên màn hình chính</button>
-      <button type="button" class="btn-block primary" id="btn-settings-close">Đóng</button>
+      <button type="button" class="btn-block ghost" id="btn-settings-close">Đóng</button>
+    </div>
+  </div>
+
+  <div id="api-banner" class="api-banner" hidden>
+    <div class="api-banner-inner">
+      <strong>Cần Stream API (cloud)</strong>
+      <p>Không dùng PC. Deploy free 1 lần → dán URL vào Cài đặt ⚙</p>
+      <div class="api-banner-actions">
+        <a class="btn-block primary" id="btn-open-render" href="https://dashboard.render.com/select-repo?type=blueprint" target="_blank" rel="noopener">Deploy free trên Render</a>
+        <button type="button" class="btn-block ghost" id="btn-open-api-settings">Nhập URL API</button>
+      </div>
     </div>
   </div>
 

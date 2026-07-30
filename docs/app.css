@@ -1,4 +1,28 @@
 /* YTM — redesigned UI (static web) */
+.api-banner {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(8, 5, 14, 0.72);
+  backdrop-filter: blur(10px);
+}
+.api-banner[hidden] { display: none !important; }
+.api-banner-inner {
+  width: min(420px, 100%);
+  background: #161022;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 20px;
+  padding: 20px;
+  box-shadow: 0 24px 60px rgba(0,0,0,.5);
+}
+.api-banner-inner strong { display: block; font-size: 1.15rem; margin-bottom: 8px; }
+.api-banner-inner p { margin: 0 0 14px; color: rgba(232,226,255,.6); line-height: 1.45; font-size: .92rem; }
+.api-banner-actions { display: flex; flex-direction: column; gap: 8px; }
+.api-banner-actions a { text-align: center; text-decoration: none; display: block; }
+
 :root {
   --bg0: #0a0612;
   --bg1: #120a1c;

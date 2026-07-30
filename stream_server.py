@@ -159,14 +159,18 @@ def api_search():
 
 
 def main() -> None:
+    import os
+
+    port = int(os.environ.get("PORT", "8765"))
     print("=" * 50)
-    print("YTM Stream API  →  http://127.0.0.1:8765")
+    print(f"YTM Stream API  →  0.0.0.0:{port}")
     print("  health:  /api/health")
     print("  stream:  /api/stream?id=VIDEO_ID")
     print("  search:  /api/search?q=lofi")
-    print("Mở web: https://meowxanh.github.io/ytm-cli/?api=http://127.0.0.1:8765")
+    print("Web: https://meowxanh.github.io/ytm-cli/?api=<URL-này>")
     print("=" * 50)
-    app.run(host="0.0.0.0", port=8765, debug=False, threaded=True)
+    # local dev; production uses gunicorn (Dockerfile)
+    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
 
 
 if __name__ == "__main__":

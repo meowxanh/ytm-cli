@@ -286,10 +286,29 @@
   function getStreamApiBases() {
     const bases = [];
     if (state.streamApi) bases.push(state.streamApi.replace(/\/$/, ""));
-    // auto local stream server
+    // optional cloud defaults (set after you deploy)
+    // bases.push("https://ytm-stream.onrender.com");
+    // local optional
     bases.push("http://127.0.0.1:8765");
     bases.push("http://localhost:8765");
-    return [...new Set(bases)];
+    return [...new Set(bases.filter(Boolean))];
+  }
+
+  function showApiBanner(show) {
+    const el = $("#api-banner");
+    if (!el) return;
+    if (show) el.hidden = false;
+    else el.hidden = true;
+  }
+
+  function setStreamApi(url) {
+    state.streamApi = (url || "").trim().replace(/\/$/, "");
+    try {
+      if (state.streamApi) localStorage.setItem(API_KEY, state.streamApi);
+      else localStorage.removeItem(API_KEY);
+    } catch (_) {}
+    const input = $("#stream-api-input");
+    if (input) input.value = state.streamApi;
   }
 
   async function resolveFromLocalApi(videoId) {
@@ -1316,10 +1335,33 @@
     openIosHelp();
   });
   $("#btn-ios-close")?.addEventListener("click", () => $("#ios-sheet")?.classList.add("hidden"));
-  $("#btn-settings")?.addEventListener("click", () => $("#settings-sheet")?.classList.remove("hidden"));
+  $("#btn-settings")?.addEventListener("click", () => {
+    const input = $("#stream-api-input");
+    if (input) input.value = state.streamApi || "";
+    $("#settings-sheet")?.classList.remove("hidden");
+  });
   $("#btn-settings-close")?.addEventListener("click", () => $("#settings-sheet")?.classList.add("hidden"));
   $("#btn-bg-help")?.addEventListener("click", () => $("#bg-sheet")?.classList.remove("hidden"));
   $("#btn-bg-close")?.addEventListener("click", () => $("#bg-sheet")?.classList.add("hidden"));
+  $("#btn-open-api-settings")?.addEventListener("click", () => {
+    showApiBanner(false);
+    $("#btn-settings")?.click();
+  });
+  $("#btn-save-api")?.addEventListener("click", async () => {
+    const url = ($("#stream-api-input")?.value || "").trim();
+    setStreamApi(url);
+    setLoading(true, "Kiểm tra API…");
+    const ok = await probeStreamApi();
+    setLoading(false);
+    if (ok) {
+      showApiBanner(false);
+      toast("Stream API OK");
+      setStatus(`API: ${ok}`);
+      $("#settings-sheet")?.classList.add("hidden");
+    } else {
+      toast("API không trả /api/health — kiểm tra URL");
+    }
+  });
 
   $("#pl-create")?.addEventListener("submit", (e) => {
     e.preventDefault();
@@ -1365,19 +1407,17 @@
     return "Chào buổi tối";
   }
 
-  // Stream API: ?api=http://127.0.0.1:8765  or localStorage
+  // Stream API: ?api=https://xxx.onrender.com  or localStorage
   (() => {
     const params = new URLSearchParams(location.search);
     const fromQuery = params.get("api");
-    if (fromQuery) {
-      state.streamApi = fromQuery.replace(/\/$/, "");
+    if (fromQuery) setStreamApi(fromQuery);
+    else {
       try {
-        localStorage.setItem(API_KEY, state.streamApi);
-      } catch (_) {}
-    } else {
-      try {
-        state.streamApi = (localStorage.getItem(API_KEY) || "").replace(/\/$/, "");
-      } catch (_) {}
+        setStreamApi(localStorage.getItem(API_KEY) || "");
+      } catch (_) {
+        setStreamApi("");
+      }
     }
   })();
 
@@ -1396,12 +1436,13 @@
 
   probeStreamApi().then((base) => {
     if (!base) {
-      setStatus("Cần stream server · chạy run-stream.ps1");
-      toast("API public chết — chạy .\\run-stream.ps1 rồi refresh");
+      setStatus("Chưa có Stream API cloud");
+      showApiBanner(true);
     } else {
+      showApiBanner(false);
       setStatus(`Stream API OK · ${base}`);
+      if (state.queue[0]) prefetchStream(state.queue[Math.max(0, state.index)].id);
+      doSearch("lofi hip hop", { fromGenre: true });
     }
-    if (state.queue[0]) prefetchStream(state.queue[Math.max(0, state.index)].id);
-    doSearch("lofi hip hop", { fromGenre: true });
   });
 })();
