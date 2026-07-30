@@ -174,7 +174,7 @@
     const m = text.match(
       /(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/|live\/)|music\.youtube\.com\/watch\?v=)([A-Za-z0-9_-]{11})/
     );
-    if (m) return m.group ? m[1] : m[1];
+    if (m) return m[1];
     if (/^[A-Za-z0-9_-]{11}$/.test(text)) return text;
     return null;
   }
