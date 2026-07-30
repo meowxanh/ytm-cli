@@ -715,6 +715,24 @@
 
   function playTrack(track, { enqueueIfMissing = false } = {}) {
     let idx = state.queue.findIndex((t) => t.id === track.id);
+
+    // Nếu phát từ kết quả search: nạp cả list còn lại vào queue để không “hết queue” sau 1 bài
+    if (idx < 0 && enqueueIfMissing && state.results?.length) {
+      const start = state.results.findIndex((t) => t.id === track.id);
+      if (start >= 0) {
+        const slice = state.results.slice(start);
+        const existing = new Set(state.queue.map((t) => t.id));
+        for (const t of slice) {
+          if (!existing.has(t.id)) {
+            state.queue.push(t);
+            existing.add(t.id);
+          }
+        }
+        idx = state.queue.findIndex((t) => t.id === track.id);
+        if (state.shuffle) rebuildShuffle();
+      }
+    }
+
     if (idx < 0 && enqueueIfMissing) {
       state.queue.push(track);
       idx = state.queue.length - 1;
@@ -796,13 +814,12 @@
     playTrackOnline(track);
   }
 
-  async function playTrackOnline(track) {
+  async function playTrackOnline(track, { retry = true } = {}) {
     const token = ++state.loadToken;
     stopAll();
     state.isPlaying = false;
     state.mode = "none";
     setStatus("Đang lấy stream…");
-    // lighter loading: only overlay if no cache
     const hadCache = !!getCachedStream(track.id);
     if (!hadCache) setLoading(true, "Lấy stream audio…");
     renderNow();
@@ -815,16 +832,45 @@
       prefetchNext();
     } catch (e) {
       if (token !== state.loadToken) return;
+      // 1 lần retry: xóa cache hỏng rồi lấy stream mới
+      if (retry) {
+        streamMem.delete(track.id);
+        saveStreamCacheDisk();
+        setStatus("Thử stream lại…");
+        try {
+          const streamUrl = await resolveAudioUrl(track.id);
+          if (token !== state.loadToken) return;
+          await playHtml5(streamUrl, track, token);
+          setLoading(false);
+          prefetchNext();
+          return;
+        } catch (_) {}
+      }
       setLoading(false);
       state.isPlaying = false;
       setStatus("Không lấy được stream");
-      toast("Stream lỗi — thử bài khác");
       renderNow();
-      // auto skip after short delay
-      setTimeout(() => {
-        if (token === state.loadToken) nextTrack();
-      }, 700);
+
+      const hasNext = hasNextTrack();
+      if (hasNext) {
+        toast("Bài này lỗi — sang bài tiếp");
+        setTimeout(() => {
+          if (token === state.loadToken) nextTrack({ fromError: true });
+        }, 500);
+      } else {
+        toast("Không phát được · queue không còn bài khác");
+      }
     }
+  }
+
+  function hasNextTrack() {
+    if (!state.queue.length) return false;
+    if (state.shuffle) {
+      if (!state.shuffleOrder.length) rebuildShuffle();
+      const pos = state.shuffleOrder.indexOf(state.index);
+      return pos >= 0 && pos < state.shuffleOrder.length - 1;
+    }
+    return state.index < state.queue.length - 1;
   }
 
   function playHtml5(url, track, token) {
@@ -878,18 +924,31 @@
     else a.pause();
   }
 
-  function nextTrack() {
-    if (!state.queue.length) return;
+  function nextTrack({ fromError = false } = {}) {
+    if (!state.queue.length) {
+      if (!fromError) toast("Queue trống — search rồi bấm phát");
+      return;
+    }
     if (state.shuffle) {
       if (!state.shuffleOrder.length) rebuildShuffle();
       const pos = state.shuffleOrder.indexOf(state.index);
-      if (pos < 0 || pos >= state.shuffleOrder.length - 1) return toast("Hết queue");
+      if (pos < 0 || pos >= state.shuffleOrder.length - 1) {
+        state.isPlaying = false;
+        stopAll();
+        setStatus("Đã hết hàng đợi");
+        renderNow();
+        if (!fromError) toast("Đã hết hàng đợi");
+        return;
+      }
       playAtIndex(state.shuffleOrder[pos + 1]);
     } else {
       if (state.index >= state.queue.length - 1) {
         state.isPlaying = false;
+        stopAll();
+        setStatus("Đã hết hàng đợi");
         renderNow();
-        return toast("Hết queue");
+        if (!fromError) toast("Đã hết hàng đợi · chọn bài khác hoặc bật shuffle");
+        return;
       }
       playAtIndex(state.index + 1);
     }
@@ -1007,8 +1066,15 @@
       if (!t) return;
       streamMem.delete(t.id);
       saveStreamCacheDisk();
-      toast("Stream hỏng — next");
-      setTimeout(() => nextTrack(), 500);
+      if (hasNextTrack()) {
+        toast("Stream hỏng — sang bài tiếp");
+        setTimeout(() => nextTrack({ fromError: true }), 400);
+      } else {
+        toast("Stream hỏng · không còn bài trong queue");
+        state.isPlaying = false;
+        setStatus("Lỗi stream");
+        renderNow();
+      }
     });
     // Can play through faster feedback
     a.addEventListener("canplay", () => {
