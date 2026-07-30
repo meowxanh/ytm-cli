@@ -1,29 +1,43 @@
-# YTM — App nghe nhạc (không cần PC server)
+# YTM — App nghe nhạc
 
-App nghe nhạc YouTube chạy **100% trên trình duyệt / iPhone**.  
-Không bật máy Windows. Host free trên **GitHub Pages**.
+## App độc lập (iPhone) — thoát app vẫn nghe
 
-## Dùng ngay (sau khi bật Pages)
+Thư mục [`ytm-mobile/`](ytm-mobile/) — app native **cài vào máy**, không Expo Go, không bật PC khi nghe.
 
-**https://meowxanh.github.io/ytm-cli/**
+```powershell
+cd C:\Users\Duy\ytm-cli\ytm-mobile
+npx.cmd eas-cli login
+npx.cmd eas-cli init
+npx.cmd eas-cli build --platform ios --profile preview
+```
 
-### Cài như app trên iPhone
+**Cần Apple Developer ($99/năm)** để cài app iOS độc lập.  
+Hướng dẫn đủ: [`ytm-mobile/README.md`](ytm-mobile/README.md)
 
-1. Mở link trên bằng **Safari**
-2. **Chia sẻ** → **Thêm vào Màn hình chính**
-3. Dùng icon **YTM** như app
+| | Web | **App độc lập** |
+|--|-----|-----------------|
+| Thoát app vẫn nghe | Không | **Có** |
+| Cần bật PC khi nghe | Không | **Không** |
+| Cần Apple Developer | Không | **Có ($99/năm)** |
 
-## Cách hoạt động
+---
 
-| | |
-|--|--|
-| Giao diện | HTML/CSS/JS (static) |
-| Search | API public (Invidious / Piped) |
-| Phát nhạc | YouTube IFrame (trên điện thoại) |
-| Queue / fav / playlist | `localStorage` trên máy |
-| Server PC | **Không cần** |
+## Web + stream server (ổn định)
 
-> Một số video chặn embed → app tự next. Không tải file audio về máy.
+API public (Piped/Invidious) hay **chết** → cần stream server yt-dlp nhẹ:
+
+```powershell
+cd C:\Users\Duy\ytm-cli
+.\run-stream.ps1
+```
+
+Rồi mở:
+
+**https://meowxanh.github.io/ytm-cli/?api=http://127.0.0.1:8765**
+
+- Chỉ lấy **URL audio**, không tải file  
+- **Không embed**  
+- iPhone cùng Wi‑Fi: `?api=http://IP-PC:8765`
 
 ## Bật GitHub Pages (1 lần)
 

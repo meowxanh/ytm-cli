@@ -1,26 +1,26 @@
-/* YTM — HTML5 audio only (no YouTube embed). Parallel APIs + cache for speed. */
+/* YTM — HTML5 audio only (no embed). Prefer local yt-dlp stream API; public APIs as fallback. */
 (() => {
   const STORAGE_KEY = "ytm_static_v2";
   const STREAM_CACHE_KEY = "ytm_stream_cache_v1";
-  const STREAM_TTL_MS = 25 * 60 * 1000; // stream URLs expire; cache ~25 min
+  const API_KEY = "ytm_stream_api";
+  const STREAM_TTL_MS = 25 * 60 * 1000;
 
-  // Lean instance lists (race, not sequential)
+  // Public instances often down — kept as weak fallback
   const INVIDIOUS = [
     "https://yewtu.be",
     "https://inv.nadeko.net",
     "https://invidious.nerdvpn.de",
     "https://vid.puffyan.us",
+    "https://inv.tux.pizza",
   ];
   const PIPED = [
     "https://api.piped.private.coffee",
     "https://pipedapi.kavin.rocks",
     "https://pipedapi.reallyaweso.me",
     "https://pipedapi.r4fo.com",
+    "https://pipedapi.ducks.party",
   ];
-  const COBALT = [
-    "https://api.cobalt.tools/",
-    "https://cobalt-api.kwiatekmiki.com/",
-  ];
+  const COBALT = ["https://api.cobalt.tools/", "https://cobalt-api.kwiatekmiki.com/"];
 
   const state = {
     results: [],
@@ -39,8 +39,9 @@
     duration: 0,
     mode: "none",
     loadToken: 0,
-    /** Bỏ qua ended/error khi stop/load đổi bài (tránh nextTrack giả → “hết queue”) */
     suppressAudioEvents: false,
+    streamApi: "", // e.g. http://127.0.0.1:8765
+    streamApiOk: false,
   };
 
   // in-memory stream cache: id -> { url, exp }
@@ -282,13 +283,51 @@
     return mid?.url || null;
   }
 
+  function getStreamApiBases() {
+    const bases = [];
+    if (state.streamApi) bases.push(state.streamApi.replace(/\/$/, ""));
+    // auto local stream server
+    bases.push("http://127.0.0.1:8765");
+    bases.push("http://localhost:8765");
+    return [...new Set(bases)];
+  }
+
+  async function resolveFromLocalApi(videoId) {
+    const tasks = getStreamApiBases().map((base) =>
+      fetchJson(`${base}/api/stream?id=${encodeURIComponent(videoId)}`, 25000).then((data) => {
+        if (!data?.url) throw new Error("no url");
+        state.streamApiOk = true;
+        return data.url;
+      })
+    );
+    return raceOk(tasks);
+  }
+
+  async function searchFromLocalApi(q) {
+    const tasks = getStreamApiBases().map((base) =>
+      fetchJson(`${base}/api/search?q=${encodeURIComponent(q)}&limit=12`, 25000).then((data) => {
+        const tracks = (data.tracks || []).map(normalizeTrack).filter(Boolean);
+        if (!tracks.length) throw new Error("empty");
+        state.streamApiOk = true;
+        return tracks;
+      })
+    );
+    return raceOk(tasks);
+  }
+
   async function resolveAudioUrl(videoId) {
     const cached = getCachedStream(videoId);
     if (cached) return cached;
 
-    const tasks = [];
+    // 1) Local yt-dlp stream server (reliable)
+    try {
+      const url = await resolveFromLocalApi(videoId);
+      setCachedStream(videoId, url);
+      return url;
+    } catch (_) {}
 
-    // Cobalt (often fast)
+    // 2) Weak public fallbacks (often down)
+    const tasks = [];
     COBALT.forEach((base) => {
       tasks.push(
         (async () => {
@@ -298,9 +337,9 @@
             body: JSON.stringify({
               url: `https://www.youtube.com/watch?v=${videoId}`,
               downloadMode: "audio",
-              audioFormat: "best",
+              audioFormat: "mp3",
+              audioBitrate: "128",
             }),
-            signal: AbortSignal.timeout?.(7000),
           });
           if (!res.ok) throw new Error("cobalt");
           const data = await res.json();
@@ -310,20 +349,18 @@
         })()
       );
     });
-
     PIPED.forEach((base) => {
       tasks.push(
-        fetchJson(`${base}/streams/${videoId}`, 6500).then((data) => {
+        fetchJson(`${base}/streams/${videoId}`, 8000).then((data) => {
           const u = pickAudioFromPiped(data);
           if (!u) throw new Error("piped empty");
           return u;
         })
       );
     });
-
     INVIDIOUS.forEach((base) => {
       tasks.push(
-        fetchJson(`${base}/api/v1/videos/${videoId}`, 6500).then((data) => {
+        fetchJson(`${base}/api/v1/videos/${videoId}`, 8000).then((data) => {
           const u = pickAudioFromInv(data);
           if (!u) throw new Error("inv empty");
           return u;
@@ -331,9 +368,15 @@
       );
     });
 
-    const url = await raceOk(tasks);
-    setCachedStream(videoId, url);
-    return url;
+    try {
+      const url = await raceOk(tasks);
+      setCachedStream(videoId, url);
+      return url;
+    } catch (_) {
+      throw new Error(
+        "Không lấy được stream. Chạy stream server: .\\run-stream.ps1 rồi mở web kèm ?api=http://127.0.0.1:8765"
+      );
+    }
   }
 
   async function searchTracks(q) {
@@ -353,10 +396,18 @@
     const hit = searchMem.get(key);
     if (hit && hit.exp > Date.now()) return hit.tracks;
 
+    // 1) local yt-dlp search
+    try {
+      const tracks = await searchFromLocalApi(q);
+      searchMem.set(key, { tracks, exp: Date.now() + 5 * 60 * 1000 });
+      return tracks;
+    } catch (_) {}
+
+    // 2) public
     const tasks = [];
     INVIDIOUS.forEach((base) => {
       tasks.push(
-        fetchJson(`${base}/api/v1/search?q=${encodeURIComponent(q)}&type=video`, 5500).then((data) => {
+        fetchJson(`${base}/api/v1/search?q=${encodeURIComponent(q)}&type=video`, 7000).then((data) => {
           if (!Array.isArray(data)) throw new Error("bad");
           const tracks = data.map(normalizeTrack).filter(Boolean).slice(0, 15);
           if (!tracks.length) throw new Error("empty");
@@ -366,7 +417,7 @@
     });
     PIPED.forEach((base) => {
       tasks.push(
-        fetchJson(`${base}/search?q=${encodeURIComponent(q)}&filter=videos`, 5500).then((data) => {
+        fetchJson(`${base}/search?q=${encodeURIComponent(q)}&filter=videos`, 7000).then((data) => {
           const items = data.items || data || [];
           if (!Array.isArray(items)) throw new Error("bad");
           const tracks = items
@@ -387,9 +438,31 @@
       );
     });
 
-    const tracks = await raceOk(tasks);
-    searchMem.set(key, { tracks, exp: Date.now() + 5 * 60 * 1000 });
-    return tracks;
+    try {
+      const tracks = await raceOk(tasks);
+      searchMem.set(key, { tracks, exp: Date.now() + 5 * 60 * 1000 });
+      return tracks;
+    } catch (_) {
+      throw new Error(
+        "Search lỗi. Bật stream server: .\\run-stream.ps1 (yt-dlp) — API public đang chết."
+      );
+    }
+  }
+
+  async function probeStreamApi() {
+    for (const base of getStreamApiBases()) {
+      try {
+        const data = await fetchJson(`${base}/api/health`, 2500);
+        if (data?.ok) {
+          state.streamApiOk = true;
+          state.streamApi = base;
+          setStatus(`API: ${base}`);
+          return base;
+        }
+      } catch (_) {}
+    }
+    state.streamApiOk = false;
+    return null;
   }
 
   async function fetchLyrics(track) {
@@ -1292,6 +1365,22 @@
     return "Chào buổi tối";
   }
 
+  // Stream API: ?api=http://127.0.0.1:8765  or localStorage
+  (() => {
+    const params = new URLSearchParams(location.search);
+    const fromQuery = params.get("api");
+    if (fromQuery) {
+      state.streamApi = fromQuery.replace(/\/$/, "");
+      try {
+        localStorage.setItem(API_KEY, state.streamApi);
+      } catch (_) {}
+    } else {
+      try {
+        state.streamApi = (localStorage.getItem(API_KEY) || "").replace(/\/$/, "");
+      } catch (_) {}
+    }
+  })();
+
   loadStreamCacheDisk();
   load();
   ["#volume", "#volume-mobile"].forEach((sel) => {
@@ -1301,11 +1390,18 @@
   if ($("#greeting")) $("#greeting").textContent = greeting();
   if (state.queue.length && state.index < 0) state.index = 0;
   if (state.shuffle) rebuildShuffle();
-  // hide embed host if present
   const host = $("#yt-host");
   if (host) host.style.display = "none";
   renderAll();
-  // prefetch current queue head
-  if (state.queue[0]) prefetchStream(state.queue[Math.max(0, state.index)].id);
-  doSearch("lofi hip hop", { fromGenre: true });
+
+  probeStreamApi().then((base) => {
+    if (!base) {
+      setStatus("Cần stream server · chạy run-stream.ps1");
+      toast("API public chết — chạy .\\run-stream.ps1 rồi refresh");
+    } else {
+      setStatus(`Stream API OK · ${base}`);
+    }
+    if (state.queue[0]) prefetchStream(state.queue[Math.max(0, state.index)].id);
+    doSearch("lofi hip hop", { fromGenre: true });
+  });
 })();

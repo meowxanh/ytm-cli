@@ -305,11 +305,16 @@
   <div id="bg-sheet" class="sheet hidden">
     <div class="sheet-card">
       <div class="sheet-handle"></div>
-      <h2>Nghe nền (iPhone)</h2>
+      <h2>Stream / nghe nền</h2>
       <p class="muted sm" style="margin-bottom:12px;line-height:1.5">
-        App chỉ dùng <strong>HTML5 audio stream</strong> (không embed).
-        iOS vẫn có thể tắt web khi thoát app — hạn chế của Safari.
+        API public (Piped/Invidious) hay chết → cần <strong>stream server yt-dlp</strong> trên PC:
       </p>
+      <ol class="ios-steps">
+        <li>PC: <code>.\run-stream.ps1</code></li>
+        <li>Mở: <code>https://meowxanh.github.io/ytm-cli/?api=http://127.0.0.1:8765</code></li>
+        <li>iPhone cùng Wi‑Fi: dùng IP máy PC thay 127.0.0.1</li>
+      </ol>
+      <p class="muted sm">Chỉ lấy URL audio, không tải file. Không dùng embed.</p>
       <button type="button" class="btn-block primary" id="btn-bg-close">Đã hiểu</button>
     </div>
   </div>
